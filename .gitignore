@@ -9,10 +9,19 @@ __pycache__/
 .venv/
 venv/
 
+# Python packaging/build outputs
+*.egg-info/
+dist/
+build/
+
 # Outputs
 outputs/
 *.wav
 *.ogg
+
+# Local catalog / library outputs
+library/
+*.jsonl
 
 # Examples (local sandbox)
 .examples/
