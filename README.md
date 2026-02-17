@@ -137,6 +137,7 @@ Notes:
 - Plugin-style engine registry additions (third-party engines without core changes)
 
 See the full status + milestones in [docs/roadmap.md](docs/roadmap.md).
+- Windows training notes for creature-family LoRAs: [docs/creature_family_training_windows.md](docs/creature_family_training_windows.md)
 - Some features still require external tools (e.g. `ffmpeg` on PATH for MP3/OGG export).
 
 ## In-repo demo sound pack (v1)
