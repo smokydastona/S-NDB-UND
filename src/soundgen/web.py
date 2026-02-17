@@ -112,7 +112,82 @@ def _generate(
 
     post: bool,
     polish: bool,
+
+    # Extra engine/settings knobs (kept at the end of the signature to avoid breaking existing UI wiring)
+    replicate_model: str,
+    replicate_token: str,
+    replicate_input_json: str,
+
+    samplelib_zips: object,
+    library_pitch_min: float,
+    library_pitch_max: float,
+    library_index: str,
+
+    synth_freq_hz: float,
+    synth_attack_ms: float,
+    synth_decay_ms: float,
+    synth_sustain: float,
+    synth_release_ms: float,
+    synth_noise_mix: float,
+    synth_drive: float,
+    synth_pitch_min: float,
+    synth_pitch_max: float,
+    synth_lowpass_hz: float,
+    synth_highpass_hz: float,
+
+    loop_crossfade_ms: int,
+
+    subtitle_key: str,
+    mc_sample_rate: int,
+    mc_channels: int,
+
+    layered_transient_ms_adv: int | None,
+    layered_tail_ms_adv: int | None,
+    layered_transient_attack_ms_adv: float | None,
+    layered_transient_hold_ms_adv: float | None,
+    layered_transient_decay_ms_adv: float | None,
+    layered_body_attack_ms_adv: float | None,
+    layered_body_hold_ms_adv: float | None,
+    layered_body_decay_ms_adv: float | None,
+    layered_tail_attack_ms_adv: float | None,
+    layered_tail_hold_ms_adv: float | None,
+    layered_tail_decay_ms_adv: float | None,
+    layered_duck_release_ms_adv: float | None,
 ) -> tuple[str, str, str, object, object]:
+    def _maybe(s: str) -> str | None:
+        t = str(s or "").strip()
+        return t if t else None
+
+    def _as_zip_paths(v: object) -> tuple[Path, ...]:
+        if v is None:
+            return ()
+        items: list[object]
+        if isinstance(v, (list, tuple)):
+            items = list(v)
+        else:
+            items = [v]
+        out: list[Path] = []
+        for it in items:
+            if it is None:
+                continue
+            if isinstance(it, (str, Path)):
+                p = Path(str(it))
+                if p.exists() and p.suffix.lower() == ".zip":
+                    out.append(p)
+                continue
+            # gradio file objects
+            name = getattr(it, "name", None)
+            if name:
+                p = Path(str(name))
+                if p.exists() and p.suffix.lower() == ".zip":
+                    out.append(p)
+                continue
+            if isinstance(it, dict) and it.get("name"):
+                p = Path(str(it["name"]))
+                if p.exists() and p.suffix.lower() == ".zip":
+                    out.append(p)
+        return tuple(out)
+
     def _infer_out_format() -> str:
         fmt = (out_format or "wav").strip().lower()
         return fmt if fmt in {"wav", "mp3", "ogg", "flac"} else "wav"
@@ -420,7 +495,7 @@ def _generate(
             reverb_time_s=float(rev_t),
             prompt_hint=str(prompt),
             loop_clean=bool(loop_clean),
-            loop_crossfade_ms=100,
+            loop_crossfade_ms=int(loop_crossfade_ms) if loop_crossfade_ms is not None else 100,
             exciter_amount=float(exc),
         )
         if hints is not None:
@@ -500,7 +575,10 @@ def _generate(
             event=(event or "generated.web"),
             sound_path=(sound_path or sp),
             subtitle=(subtitle or None),
+            subtitle_key=_maybe(subtitle_key),
             ogg_quality=int(ogg_quality),
+            sample_rate=int(mc_sample_rate) if mc_sample_rate else 44100,
+            channels=int(mc_channels) if mc_channels else 1,
             weight=max(1, int(weight)),
             volume=float(volume),
             pitch=float(pitch),
@@ -531,6 +609,9 @@ def _generate(
     spec_img = None
 
     default_zips = tuple(Path(".examples").joinpath("sound libraies").glob("*.zip"))
+    user_zips = _as_zip_paths(samplelib_zips)
+    active_zips = user_zips if user_zips else default_zips
+    index_path = None if str(library_index or "").strip() == "" else Path(str(library_index))
 
     def _lerp(a: float, b: float, t: float) -> float:
         tt = float(np.clip(t, 0.0, 1.0))
@@ -541,13 +622,30 @@ def _generate(
     transient_decay_ms = _lerp(140.0, 45.0, sharp)
     tail_len_ms = int(np.clip(int(layered_tail_length_ms), 80, 2000))
     tail_decay_ms = max(30.0, float(tail_len_ms) - 40.0)
-    synth_attack = float(hints.attack_ms) if hints and hints.attack_ms is not None else 5.0
-    synth_release = float(hints.release_ms) if hints and hints.release_ms is not None else 120.0
-    synth_pitch_min = float(hints.pitch_min) if hints and hints.pitch_min is not None else 0.90
-    synth_pitch_max = float(hints.pitch_max) if hints and hints.pitch_max is not None else 1.10
-    synth_lp = float(hints.lowpass_hz) if hints and hints.lowpass_hz is not None else 16000.0
-    synth_hp = float(hints.highpass_hz) if hints and hints.highpass_hz is not None else 30.0
-    synth_drive = float(hints.drive) if hints and hints.drive is not None else 0.0
+    synth_attack = float(hints.attack_ms) if hints and hints.attack_ms is not None else float(synth_attack_ms)
+    synth_release = float(hints.release_ms) if hints and hints.release_ms is not None else float(synth_release_ms)
+    synth_pitch_min = float(hints.pitch_min) if hints and hints.pitch_min is not None else float(synth_pitch_min)
+    synth_pitch_max = float(hints.pitch_max) if hints and hints.pitch_max is not None else float(synth_pitch_max)
+    synth_lp = float(hints.lowpass_hz) if hints and hints.lowpass_hz is not None else float(synth_lowpass_hz)
+    synth_hp = float(hints.highpass_hz) if hints and hints.highpass_hz is not None else float(synth_highpass_hz)
+    synth_drive = float(hints.drive) if hints and hints.drive is not None else float(synth_drive)
+
+    # Layered advanced overrides (optional)
+    transient_ms_final = int(layered_transient_ms_adv) if layered_transient_ms_adv is not None else 110
+    tail_ms_final = int(layered_tail_ms_adv) if layered_tail_ms_adv is not None else int(tail_len_ms)
+    transient_attack_final = float(layered_transient_attack_ms_adv) if layered_transient_attack_ms_adv is not None else float(transient_attack_ms)
+    transient_hold_final = float(layered_transient_hold_ms_adv) if layered_transient_hold_ms_adv is not None else 10.0
+    transient_decay_final = float(layered_transient_decay_ms_adv) if layered_transient_decay_ms_adv is not None else float(transient_decay_ms)
+
+    body_attack_final = float(layered_body_attack_ms_adv) if layered_body_attack_ms_adv is not None else 5.0
+    body_hold_final = float(layered_body_hold_ms_adv) if layered_body_hold_ms_adv is not None else 0.0
+    body_decay_final = float(layered_body_decay_ms_adv) if layered_body_decay_ms_adv is not None else 80.0
+
+    tail_attack_final = float(layered_tail_attack_ms_adv) if layered_tail_attack_ms_adv is not None else 15.0
+    tail_hold_final = float(layered_tail_hold_ms_adv) if layered_tail_hold_ms_adv is not None else 0.0
+    tail_decay_final = float(layered_tail_decay_ms_adv) if layered_tail_decay_ms_adv is not None else float(tail_decay_ms)
+
+    duck_release_final = float(layered_duck_release_ms_adv) if layered_duck_release_ms_adv is not None else 90.0
 
     if inten > 0.0:
         synth_drive = float(np.clip(synth_drive + 0.55 * inten, 0.0, 1.0))
@@ -599,13 +697,23 @@ def _generate(
                 diffusers_multiband_high_hz=float(diffusers_mb_high_hz),
                 preset=(preset or None),
                 rfxgen_path=(Path(rfxgen_path) if rfxgen_path else None),
-                library_zips=default_zips,
+                replicate_model=_maybe(replicate_model),
+                replicate_token=_maybe(replicate_token),
+                replicate_input_json=_maybe(replicate_input_json),
+
+                library_zips=active_zips,
                 library_mix_count=max(1, int(library_mix_count)),
+                library_pitch_min=float(library_pitch_min),
+                library_pitch_max=float(library_pitch_max),
+                library_index_path=index_path,
                 sample_rate=44100,
                 synth_waveform=str(synth_waveform),
-                synth_freq_hz=440.0,
+                synth_freq_hz=float(synth_freq_hz),
                 synth_attack_ms=synth_attack,
+                synth_decay_ms=float(synth_decay_ms),
+                synth_sustain_level=float(synth_sustain),
                 synth_release_ms=synth_release,
+                synth_noise_mix=float(synth_noise_mix),
                 synth_pitch_min=synth_pitch_min,
                 synth_pitch_max=synth_pitch_max,
                 synth_lowpass_hz=synth_lp,
@@ -627,12 +735,18 @@ def _generate(
                 layered_granular_grain_ms=float(layered_granular_grain_ms),
                 layered_granular_spray=float(layered_granular_spray),
                 layered_duck_amount=float(layered_duck),
-                layered_transient_attack_ms=float(transient_attack_ms),
-                layered_transient_hold_ms=10.0,
-                layered_transient_decay_ms=float(transient_decay_ms),
-                layered_tail_ms=int(tail_len_ms),
-                layered_tail_attack_ms=15.0,
-                layered_tail_decay_ms=float(tail_decay_ms),
+                layered_transient_ms=int(transient_ms_final),
+                layered_tail_ms=int(tail_ms_final),
+                layered_transient_attack_ms=float(transient_attack_final),
+                layered_transient_hold_ms=float(transient_hold_final),
+                layered_transient_decay_ms=float(transient_decay_final),
+                layered_body_attack_ms=float(body_attack_final),
+                layered_body_hold_ms=float(body_hold_final),
+                layered_body_decay_ms=float(body_decay_final),
+                layered_tail_attack_ms=float(tail_attack_final),
+                layered_tail_hold_ms=float(tail_hold_final),
+                layered_tail_decay_ms=float(tail_decay_final),
+                layered_duck_release_ms=float(duck_release_final),
             )
         except Exception as e:
             msg = str(e).strip() or e.__class__.__name__
@@ -676,7 +790,7 @@ def _generate(
         credits["pro_preset"] = str(pro_preset or "off")
         credits["polish_profile"] = str(polish_profile or "off")
         credits["loop_clean"] = bool(loop_clean)
-        credits["loop_crossfade_ms"] = 100
+        credits["loop_crossfade_ms"] = int(loop_crossfade_ms) if loop_crossfade_ms is not None else 100
         if generated.sources:
             credits["sources"] = list(generated.sources)
 
@@ -702,9 +816,13 @@ def _generate(
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(title="S-NDB-UND") as demo:
-        gr.Markdown("# S-NDB-UND — Prompt → Sound Effect")
+        gr.Markdown(
+            "# S-NDB-UND — Prompt → Sound Effect\n"
+            "Start with: Engine + Prompt + Seconds. Expand the accordions only if you need more control.\n"
+            "Tip: turn on **Pro preset** or a **Polish profile** for quick wins."
+        )
         with gr.Accordion("Engine & preset", open=True):
-            engine = gr.Radio(["diffusers", "stable_audio_open", "rfxgen", "samplelib", "synth", "layered"], value="diffusers", label="Engine")
+            engine = gr.Radio(["diffusers", "stable_audio_open", "rfxgen", "replicate", "samplelib", "synth", "layered"], value="diffusers", label="Engine")
             with gr.Row():
                 device = gr.Dropdown(["cpu", "cuda"], value="cpu", label="Device")
                 model = gr.Dropdown(
@@ -741,9 +859,43 @@ def build_demo() -> gr.Blocks:
                 preset = gr.Dropdown(list(SUPPORTED_PRESETS), value="blip", label="rfxgen preset")
                 rfxgen_path = gr.Textbox(value="", label="rfxgen path (optional)", placeholder="e.g. tools/rfxgen/rfxgen.exe")
 
+            with gr.Accordion("Replicate (paid API engine)", open=False):
+                replicate_model = gr.Textbox(value="", label="Replicate model (optional)", placeholder="e.g. owner/model")
+                replicate_token = gr.Textbox(value="", label="Replicate token (optional; not saved)")
+                replicate_input_json = gr.Textbox(value="", label="Extra input JSON (optional)", placeholder='{ "cfg": 7.0 }')
+
+            with gr.Accordion("Sample library (engine=samplelib)", open=False):
+                samplelib_zips = gr.File(
+                    file_count="multiple",
+                    file_types=[".zip"],
+                    label="Library ZIP(s) (optional; defaults to .examples/sound libraies/*.zip)",
+                )
+                with gr.Row():
+                    library_pitch_min = gr.Slider(0.50, 1.20, value=0.85, step=0.01, label="Pitch min")
+                    library_pitch_max = gr.Slider(0.80, 2.00, value=1.20, step=0.01, label="Pitch max")
+                    library_index = gr.Textbox(value="library/samplelib_index.json", label="Index cache path (blank disables)")
+
             with gr.Row():
                 library_mix_count = gr.Slider(1, 2, value=1, step=1, label="samplelib mix count")
-                synth_waveform = gr.Dropdown(["sine", "square", "saw", "triangle", "noise"], value="sine", label="synth waveform")
+
+            with gr.Accordion("Synth (engine=synth)", open=False):
+                with gr.Row():
+                    synth_waveform = gr.Dropdown(["sine", "square", "saw", "triangle", "noise"], value="sine", label="Waveform")
+                    synth_freq_hz = gr.Slider(40.0, 4000.0, value=440.0, step=1.0, label="Base frequency (Hz)")
+                with gr.Row():
+                    synth_attack_ms = gr.Slider(0.5, 200.0, value=5.0, step=0.5, label="Attack (ms)")
+                    synth_decay_ms = gr.Slider(1.0, 800.0, value=80.0, step=1.0, label="Decay (ms)")
+                    synth_sustain = gr.Slider(0.0, 1.0, value=0.35, step=0.01, label="Sustain")
+                    synth_release_ms = gr.Slider(1.0, 1200.0, value=120.0, step=1.0, label="Release (ms)")
+                with gr.Row():
+                    synth_noise_mix = gr.Slider(0.0, 1.0, value=0.05, step=0.01, label="Noise mix")
+                    synth_drive = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="Drive")
+                with gr.Row():
+                    synth_pitch_min = gr.Slider(0.50, 1.20, value=0.90, step=0.01, label="Pitch min")
+                    synth_pitch_max = gr.Slider(0.80, 2.00, value=1.10, step=0.01, label="Pitch max")
+                with gr.Row():
+                    synth_lowpass_hz = gr.Slider(200.0, 20000.0, value=16000.0, step=50.0, label="Lowpass (Hz)")
+                    synth_highpass_hz = gr.Slider(0.0, 2000.0, value=30.0, step=10.0, label="Highpass (Hz)")
 
             with gr.Row():
                 layered_preset = gr.Dropdown(
@@ -788,6 +940,25 @@ def build_demo() -> gr.Blocks:
                 )
                 layered_transient_sharpness = gr.Slider(0.0, 1.0, value=0.7, step=0.05, label="layered transient sharpness")
                 layered_tail_length_ms = gr.Slider(80, 1200, value=350, step=10, label="layered tail length (ms)")
+
+            with gr.Accordion("Layered (advanced timing/envelopes)", open=False):
+                gr.Markdown("Leave blank to use the simple knobs / defaults.")
+                with gr.Row():
+                    layered_transient_ms_adv = gr.Number(value=None, precision=0, label="transient window (ms)")
+                    layered_tail_ms_adv = gr.Number(value=None, precision=0, label="tail window (ms)")
+                with gr.Row():
+                    layered_transient_attack_ms_adv = gr.Number(value=None, precision=1, label="transient attack (ms)")
+                    layered_transient_hold_ms_adv = gr.Number(value=None, precision=1, label="transient hold (ms)")
+                    layered_transient_decay_ms_adv = gr.Number(value=None, precision=1, label="transient decay (ms)")
+                with gr.Row():
+                    layered_body_attack_ms_adv = gr.Number(value=None, precision=1, label="body attack (ms)")
+                    layered_body_hold_ms_adv = gr.Number(value=None, precision=1, label="body hold (ms)")
+                    layered_body_decay_ms_adv = gr.Number(value=None, precision=1, label="body decay (ms)")
+                with gr.Row():
+                    layered_tail_attack_ms_adv = gr.Number(value=None, precision=1, label="tail attack (ms)")
+                    layered_tail_hold_ms_adv = gr.Number(value=None, precision=1, label="tail hold (ms)")
+                    layered_tail_decay_ms_adv = gr.Number(value=None, precision=1, label="tail decay (ms)")
+                layered_duck_release_ms_adv = gr.Number(value=None, precision=1, label="duck release (ms)")
 
             layered_source_lock.change(
                 fn=lambda v: gr.update(visible=bool(v)),
@@ -900,6 +1071,7 @@ def build_demo() -> gr.Blocks:
             post = gr.Checkbox(value=True, label="Post-process (trim/fade/normalize/EQ)")
             polish = gr.Checkbox(value=False, label="Polish mode (denoise/transients/compress/limit)")
             loop_clean = gr.Checkbox(value=False, label="Loop-clean ambience (100ms seam crossfade)")
+            loop_crossfade_ms = gr.Slider(10, 400, value=100, step=10, label="Loop crossfade (ms)")
 
         def _preset_info_md(k: str) -> gr.Update:
             key = str(k or "off").strip()
@@ -935,12 +1107,18 @@ def build_demo() -> gr.Blocks:
         with gr.Row():
             sound_path = gr.Textbox(value="generated/web", label="Sound path (under sounds/, no extension)")
             subtitle = gr.Textbox(value="", label="Subtitle (optional)")
+            subtitle_key = gr.Textbox(value="", label="Subtitle key (optional)")
         with gr.Row():
             variants = gr.Slider(1, 10, value=1, step=1, label="Variants")
             weight = gr.Slider(1, 20, value=1, step=1, label="Weight")
             volume = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="Volume")
             pitch = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Pitch")
             ogg_quality = gr.Slider(0, 10, value=5, step=1, label="OGG quality")
+
+        with gr.Accordion("Minecraft advanced", open=False):
+            with gr.Row():
+                mc_sample_rate = gr.Dropdown([22050, 32000, 44100, 48000], value=44100, label="Sample rate")
+                mc_channels = gr.Dropdown([1, 2], value=1, label="Channels")
 
         btn = gr.Button("Generate")
         out_file = gr.File(label="Generated file")
@@ -1044,6 +1222,46 @@ def build_demo() -> gr.Blocks:
                 ogg_quality,
                 post,
                 polish,
+
+                replicate_model,
+                replicate_token,
+                replicate_input_json,
+
+                samplelib_zips,
+                library_pitch_min,
+                library_pitch_max,
+                library_index,
+
+                synth_freq_hz,
+                synth_attack_ms,
+                synth_decay_ms,
+                synth_sustain,
+                synth_release_ms,
+                synth_noise_mix,
+                synth_drive,
+                synth_pitch_min,
+                synth_pitch_max,
+                synth_lowpass_hz,
+                synth_highpass_hz,
+
+                loop_crossfade_ms,
+
+                subtitle_key,
+                mc_sample_rate,
+                mc_channels,
+
+                layered_transient_ms_adv,
+                layered_tail_ms_adv,
+                layered_transient_attack_ms_adv,
+                layered_transient_hold_ms_adv,
+                layered_transient_decay_ms_adv,
+                layered_body_attack_ms_adv,
+                layered_body_hold_ms_adv,
+                layered_body_decay_ms_adv,
+                layered_tail_attack_ms_adv,
+                layered_tail_hold_ms_adv,
+                layered_tail_decay_ms_adv,
+                layered_duck_release_ms_adv,
             ],
             outputs=[out_file, playsound_cmd, info, wave, spec],
         )

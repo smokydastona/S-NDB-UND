@@ -1,8 +1,46 @@
 # S-NDB-UND (Prompt → SFX WAV)
 
-Generate short sound effects from a text prompt.
+Generate short sound effects from a text prompt — with modder-ready export.
 
 App name: **S-NDB-UND** (Python module name: `soundgen`).
+
+## At a glance
+
+- **One prompt → one sound**, or **best-of-N** selection with QA scoring.
+- **Minecraft export built in**: `.ogg` + `sounds.json` + optional subtitles + pack credits.
+- **Workflow modes**:
+	- Web UI (Gradio): interactive controls for every engine, with “advanced” tucked into accordions.
+	- Batch manifests (JSON/CSV): per-item overrides for presets/pro controls + Stable Audio settings.
+	- Doc → prompt: drop docs in `pre_gen_sound/` and generate whole sound families.
+- **Pro presets + named polish profiles**: “one-click paid tool defaults” that apply conservatively.
+
+## Quickstart
+
+```powershell
+# Web UI
+python -m soundgen.web
+
+# CLI (single sound)
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav
+
+# Minecraft export
+python -m soundgen.generate --engine rfxgen --minecraft --namespace mymod --event ui.coin --subtitle "Coin" --prompt "coin pickup" --post
+```
+
+## Architecture (high level)
+
+```mermaid
+flowchart LR
+	A[Prompt / Manifest / Docs] --> B[Engine\n(diffusers | stable_audio_open | rfxgen | replicate | samplelib | synth | layered)]
+	B --> C[Mono WAV\nfloat32 in [-1, 1]]
+	C --> D{Post / Polish?}
+	D -->|no| E[Export]
+	D -->|yes| P[Post-process chain\ntrim/fade/normalize/EQ\n+ optional polish DSP]
+	P --> E[Export]
+	E --> F[WAV/MP3/FLAC/OGG]
+	E --> G[Minecraft pack\n.ogg + sounds.json + lang]
+	E --> H[Credits\nsidecar + pack credits]
+```
 
 This project supports six engines:
 
@@ -588,6 +626,23 @@ python -m soundgen.from_docs --engine rfxgen --namespace mymod --event-prefix ui
 ```
 
 This reads each document, converts it into a prompt, and exports `.ogg` + `sounds.json` into `resourcepack/` by default.
+
+### Per-entry controls via doc "Manifest:" lines
+
+If you’re using a multi-entry Markdown doc (like `pre_gen_sound/pregen_sound_bible.md`), each entry can include a generated summary line:
+
+`- **Manifest**: key=value, key=value, ...`
+
+Supported keys include the usual basics (`engine`, `seconds`, `variants`, `sound_path`, `seed`, `preset`, `weight`, `volume`, `pitch`) plus Stable Audio Open controls:
+
+- `stable_audio_model`
+- `stable_audio_negative_prompt`
+- `stable_audio_steps`
+- `stable_audio_guidance_scale`
+- `stable_audio_sampler`
+- `stable_audio_hf_token` (or `hf_token` as a short alias)
+
+CLI flags still act as defaults/fallbacks when a per-entry value is omitted.
 
 ## Optional paid API engine: Replicate
 
