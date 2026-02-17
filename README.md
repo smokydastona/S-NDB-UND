@@ -27,6 +27,25 @@ pip install -r requirements.txt
 
 > Note: The first run will download model weights.
 
+## Windows .exe builds (optional)
+
+This repo can build Windows executables via GitHub Actions.
+
+- The workflow is in `.github/workflows/build-exe.yml`.
+- Builds produce two zipped folders:
+	- `soundgen-generate-windows.zip` (CLI generator)
+	- `soundgen-web-windows.zip` (Gradio UI)
+
+How to get them:
+
+- **GitHub Actions**: run the workflow manually (Actions → “Build Windows EXE”) and download the `soundgen-windows-exes` artifact.
+- **GitHub Releases**: if you publish a release, the workflow attaches the same ZIPs to the release.
+
+Notes:
+
+- These builds can be large (torch/diffusers/transformers).
+- Some features still require external tools (e.g. `ffmpeg` on PATH for MP3/OGG export).
+
 ## Generate from the CLI
 
 ```powershell

@@ -8,6 +8,12 @@ version = "0.1.0"
 description = "Prompt to sound effect WAV generator"
 requires-python = ">=3.10"
 
+[project.scripts]
+soundgen-generate = "soundgen.generate:main"
+soundgen-web = "soundgen.web:main"
+soundgen-batch = "soundgen.batch:main"
+soundgen-from-docs = "soundgen.from_docs:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
