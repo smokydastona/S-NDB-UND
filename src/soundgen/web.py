@@ -16,6 +16,7 @@ from .qa import compute_metrics, detect_long_tail
 from .qa_viz import spectrogram_image, waveform_image
 from .controls import map_prompt_to_controls
 from .pro_presets import PRO_PRESETS, pro_preset_keys
+from .polish_profiles import POLISH_PROFILES, polish_profile_keys
 
 
 def _generate(
@@ -56,6 +57,7 @@ def _generate(
     map_controls: bool,
 
     pro_preset: str,
+    polish_profile: str,
 
     emotion: str,
     intensity: float,
@@ -186,6 +188,88 @@ def _generate(
             intensity = float(state["intensity"])
             variation = float(state["variation"])
             pitch_contour = str(state["pitch_contour"])
+            multiband = bool(state["multiband"])
+            mb_low_hz = float(state["mb_low_hz"])
+            mb_high_hz = float(state["mb_high_hz"])
+            mb_low_gain_db = float(state["mb_low_gain_db"])
+            mb_mid_gain_db = float(state["mb_mid_gain_db"])
+            mb_high_gain_db = float(state["mb_high_gain_db"])
+            mb_comp_threshold_db = state["mb_comp_threshold_db"]
+            mb_comp_ratio = float(state["mb_comp_ratio"])
+            creature_size = float(state["creature_size"])
+            formant_shift = float(state["formant_shift"])
+            texture_preset = str(state["texture_preset"])
+            texture_amount = float(state["texture_amount"])
+            texture_grain_ms = float(state["texture_grain_ms"])
+            texture_spray = float(state["texture_spray"])
+            reverb_preset = str(state["reverb_preset"])
+            reverb_mix = float(state["reverb_mix"])
+            reverb_time = float(state["reverb_time"])
+
+    # Apply named polish profile conservatively (only if fields are at UI defaults).
+    profile_key = str(polish_profile or "off").strip()
+    if profile_key and profile_key.lower() != "off":
+        prof = POLISH_PROFILES.get(profile_key)
+        if prof is not None:
+            defaults = {
+                "post": True,
+                "polish": False,
+                "multiband": False,
+                "mb_low_hz": 250.0,
+                "mb_high_hz": 3000.0,
+                "mb_low_gain_db": 0.0,
+                "mb_mid_gain_db": 0.0,
+                "mb_high_gain_db": 0.0,
+                "mb_comp_threshold_db": None,
+                "mb_comp_ratio": 2.0,
+                "creature_size": 0.0,
+                "formant_shift": 1.0,
+                "texture_preset": "off",
+                "texture_amount": 0.0,
+                "texture_grain_ms": 22.0,
+                "texture_spray": 0.55,
+                "reverb_preset": "off",
+                "reverb_mix": 0.0,
+                "reverb_time": 1.2,
+            }
+
+            state = {
+                "post": post,
+                "polish": polish,
+                "multiband": multiband,
+                "mb_low_hz": mb_low_hz,
+                "mb_high_hz": mb_high_hz,
+                "mb_low_gain_db": mb_low_gain_db,
+                "mb_mid_gain_db": mb_mid_gain_db,
+                "mb_high_gain_db": mb_high_gain_db,
+                "mb_comp_threshold_db": mb_comp_threshold_db,
+                "mb_comp_ratio": mb_comp_ratio,
+                "creature_size": creature_size,
+                "formant_shift": formant_shift,
+                "texture_preset": texture_preset,
+                "texture_amount": texture_amount,
+                "texture_grain_ms": texture_grain_ms,
+                "texture_spray": texture_spray,
+                "reverb_preset": reverb_preset,
+                "reverb_mix": reverb_mix,
+                "reverb_time": reverb_time,
+            }
+
+            if bool(prof.enable_post) and state["post"] == defaults["post"]:
+                state["post"] = True
+            if bool(prof.enable_polish) and state["polish"] == defaults["polish"]:
+                state["polish"] = True
+
+            dest_map = {
+                "reverb": "reverb_preset",
+            }
+            for dest, value in (prof.args or {}).items():
+                web_dest = dest_map.get(str(dest), str(dest))
+                if web_dest in state and state[web_dest] == defaults.get(web_dest, object()):
+                    state[web_dest] = value
+
+            post = bool(state["post"])
+            polish = bool(state["polish"])
             multiband = bool(state["multiband"])
             mb_low_hz = float(state["mb_low_hz"])
             mb_high_hz = float(state["mb_high_hz"])
@@ -508,6 +592,8 @@ def _generate(
         }
         if pro_preset != "off":
             credits["pro_preset"] = str(pro_preset)
+        if polish_profile != "off":
+            credits["polish_profile"] = str(polish_profile)
         if generated.sources:
             credits["sources"] = list(generated.sources)
 
@@ -693,6 +779,8 @@ def main() -> None:
                 outputs=[reverb_mix, reverb_time],
             )
 
+        polish_profile = gr.Dropdown(["off", *polish_profile_keys()], value="off", label="polish profile")
+
         post = gr.Checkbox(value=True, label="Post-process (trim/fade/normalize/EQ)")
         polish = gr.Checkbox(value=False, label="Polish mode (denoise/transients/compress/limit)")
 
@@ -762,6 +850,7 @@ def main() -> None:
                 map_controls,
 
                 pro_preset,
+                polish_profile,
 
                 emotion,
                 intensity,

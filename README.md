@@ -65,6 +65,25 @@ In addition to basic `--post` (trim/fade/normalize/EQ), you can enable a conserv
 python -m soundgen.generate --engine layered --polish --prompt "melee hit" --seconds 1.0 --out outputs\hit_polished.wav
 ```
 
+### Named polish profiles (AAA-style chains)
+
+If you want the post chain to feel like a “product feature”, use `--polish-profile`.
+Profiles are tuned, named chains that set post/polish + a few DSP defaults (multiband/texture/reverb/EQ targets).
+Like `--pro-preset`, they apply conservatively: they only override values that are still at their defaults.
+
+```powershell
+# UI: clean + click-safe
+python -m soundgen.generate --engine synth --polish-profile ui_clean --prompt "ui click" --seconds 0.4 --seed 7 --out outputs\ui_click_clean.wav
+
+# Foley: punchy impacts
+python -m soundgen.generate --engine layered --polish-profile foley_punchy --prompt "melee hit" --seconds 1.0 --seed 42 --out outputs\hit_punchy.wav
+
+# Ambience: smooth bed with loop-friendly fades
+python -m soundgen.generate --engine diffusers --polish-profile ambience_loop_ready --prompt "cave ambience drone" --seconds 8 --seed 9 --post --out outputs\cave_loopy.wav
+```
+
+In the Web UI (`python -m soundgen.web`), use the **polish profile** dropdown next to the post/polish toggles.
+
 ### Pro controls (conditioning + DSP)
 
 These controls are applied in the post-processing stage, so they work with any engine when `--post` or `--polish` is enabled.

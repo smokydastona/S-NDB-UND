@@ -15,6 +15,7 @@ from .minecraft import export_wav_to_minecraft_pack
 from .credits import upsert_pack_credits, write_sidecar_credits
 from .controls import map_prompt_to_controls
 from .pro_presets import apply_pro_preset, pro_preset_keys
+from .polish_profiles import apply_polish_profile, polish_profile_keys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -201,6 +202,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--polish",
         action="store_true",
         help="Enable 'Polish Mode' DSP (denoise + transient shaping + compression + limiter). Implies --post.",
+    )
+    p.add_argument(
+        "--polish-profile",
+        choices=["off", *polish_profile_keys()],
+        default="off",
+        help="Named post/polish profile (AAA-style chain). Only overrides values still at their defaults.",
     )
     p.add_argument(
         "--map-controls",
@@ -445,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Apply pro preset after parsing so we can compare against argparse defaults.
     apply_pro_preset(preset_key=str(args.pro_preset), args=args, parser=parser)
+    apply_polish_profile(profile_key=str(getattr(args, "polish_profile", "off")), args=args, parser=parser)
 
     if args.duration is not None:
         args.seconds = float(args.duration)
@@ -641,6 +649,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if getattr(args, "pro_preset", "off") != "off":
             data["pro_preset"] = str(args.pro_preset)
+        if getattr(args, "polish_profile", "off") != "off":
+            data["polish_profile"] = str(args.polish_profile)
         if generated.sources:
             data["sources"] = list(generated.sources)
 

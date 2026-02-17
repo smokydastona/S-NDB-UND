@@ -10,6 +10,7 @@ from .manifest import ManifestItem
 from .doc_reader import UnsupportedDocumentError, extract_sound_prompts, read_document_text, to_prompt
 from .batch import run_item
 from .pro_presets import apply_pro_preset, pro_preset_keys
+from .polish_profiles import apply_polish_profile, polish_profile_keys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["off", *pro_preset_keys()],
         default="off",
         help="High-level preset that sets sensible defaults (polish/conditioning/DSP). Only overrides values still at their defaults.",
+    )
+    p.add_argument(
+        "--polish-profile",
+        choices=["off", *polish_profile_keys()],
+        default="off",
+        help="Named post/polish profile (AAA-style chain). Only overrides values still at their defaults.",
     )
     p.add_argument("--polish", action="store_true", help="Enable conservative denoise/transient/compress/limit defaults")
     p.add_argument("--emotion", choices=["neutral", "aggressive", "calm", "scared"], default="neutral")
@@ -152,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Apply pro preset after parsing so we can compare against argparse defaults.
     apply_pro_preset(preset_key=str(getattr(args, "pro_preset", "off")), args=args, parser=parser)
+    apply_polish_profile(profile_key=str(getattr(args, "polish_profile", "off")), args=args, parser=parser)
 
     in_dir = Path(args.in_dir)
     if not in_dir.exists():
