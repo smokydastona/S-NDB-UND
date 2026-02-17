@@ -1,5 +1,7 @@
 # S-NDB-UND (Prompt → SFX WAV)
 
+[![Build EXE](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml/badge.svg)](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml)
+
 Generate short sound effects from a text prompt — with modder-ready export.
 
 App name: **S-NDB-UND** (Python module name: `soundgen`).
@@ -26,6 +28,15 @@ python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out 
 # Minecraft export
 python -m soundgen.generate --engine rfxgen --minecraft --namespace mymod --event ui.coin --subtitle "Coin" --prompt "coin pickup" --post
 ```
+
+## Screenshots (add yours)
+
+This repo intentionally does not commit generated audio or packs. Screenshots/GIFs are welcome.
+
+- Web UI: `python -m soundgen.web`
+- Desktop UI: `python -m soundgen.desktop`
+
+Suggested folder: `docs/screenshots/` and then link them here.
 
 ## Architecture (high level)
 
@@ -118,6 +129,12 @@ How to get them:
 Notes:
 
 - These builds can be large (torch/diffusers/transformers).
+
+## Roadmap
+
+- More preset packs (UI/UI+gameplay/creature families) and community-contributed templates
+- Fine-tuning workflow (optional): dataset format + training script + inference loading
+- Plugin-style engine registry additions (third-party engines without core changes)
 - Some features still require external tools (e.g. `ffmpeg` on PATH for MP3/OGG export).
 
 ## In-repo demo sound pack (v1)
