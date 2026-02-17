@@ -1,6 +1,8 @@
-# Sound Generator (Prompt → SFX WAV)
+# S-NDB-UND (Prompt → SFX WAV)
 
 Generate short sound effects from a text prompt.
+
+App name: **S-NDB-UND** (Python module name: `soundgen`).
 
 This project supports six engines:
 
@@ -62,17 +64,17 @@ This repo can build Windows executables via GitHub Actions.
 
 - The workflow is in `.github/workflows/build-exe.yml`.
 - Builds produce one zipped folder (versioned per workflow run):
-	- `soundgen-<run>-windows.zip` (single app: CLI + Desktop UI)
+	- `S-NDB-UND-<run>-windows.zip` (single app: CLI + Desktop UI)
 
 Usage:
 
-- Double-click `soundgen.exe` to open the desktop UI window.
+- Double-click `S-NDB-UND.exe` to open the desktop UI window.
 - Run in a terminal for CLI generation:
-	- `soundgen.exe generate --engine rfxgen --prompt "coin pickup" --post --out outputs\\test.wav`
+	- `S-NDB-UND.exe generate --engine rfxgen --prompt "coin pickup" --post --out outputs\\test.wav`
 
 How to get them:
 
-- **GitHub Actions**: builds run on every push. Download the `soundgen-windows-exes-<run>` artifact.
+- **GitHub Actions**: builds run on every push. Download the `S-NDB-UND-windows-exes-<run>` artifact.
 - **GitHub Releases**: if you publish a release, the workflow attaches the same ZIPs to the release.
 
 Notes:
@@ -138,6 +140,7 @@ Example:
 python -m soundgen.generate --engine stable_audio_open --hf-token <YOUR_TOKEN>
 python -m soundgen.generate --engine stable_audio_open --stable-audio-sampler euler_a --hf-token <YOUR_TOKEN>
 python -m soundgen.generate --engine stable_audio_open --candidates 4 --stable-audio-steps 100 --stable-audio-guidance-scale 7 --prompt "metallic ui confirm" --seconds 1.2 --seed 42 --post --out outputs\ui_confirm.wav
+```
 
 ## Minecraft mob soundset generator
 
@@ -145,11 +148,10 @@ Generate a full set of mob sounds (hurt/death/ambient/step) directly into a pack
 
 ```powershell
 # EXE (from the Windows artifact)
-soundgen.exe mobset --mob zombie --namespace mymod --pack-root resourcepack --engine stable_audio_open --variants 4 --subtitle-base "Zombie" --show-snippet -- --post --polish
+S-NDB-UND.exe mobset --mob zombie --namespace mymod --pack-root resourcepack --engine stable_audio_open --variants 4 --subtitle-base "Zombie" --show-snippet -- --post --polish
 
 # Python
 python -m soundgen.app mobset --mob zombie --namespace mymod --pack-root resourcepack --engine layered --variants 4 --show-snippet -- --post --polish
-```
 ```
 
 ### Polish mode (DSP)

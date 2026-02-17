@@ -20,12 +20,13 @@ python -m pip install pyinstaller | Out-Null
 # Ensure runtime deps are present (uses requirements.txt)
 python -m pip install -r requirements.txt | Out-Null
 
-# Build two executables (folder-based /onedir for reliability)
+# Build the executable (folder-based /onedir for reliability)
 # Note: AI engines (torch/diffusers/transformers) make these builds large.
-$appName = "soundgen"
+$baseAppName = "S-NDB-UND"
+$appName = $baseAppName
 if ($Version -and $Version.Trim().Length -gt 0) {
   $ver = $Version.Trim()
-  $appName = "$appName-$ver"
+  $appName = "$baseAppName-$ver"
 }
 
 $commonArgs = @(

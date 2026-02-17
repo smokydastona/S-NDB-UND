@@ -321,7 +321,7 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace) -> list[Path]:
                 ogg_quality=int(args.ogg_quality),
                 sample_rate=int(args.mc_sample_rate),
                 channels=int(args.mc_channels),
-                description="Sound Generator pack",
+                description="S-NDB-UND pack",
                 write_pack_mcmeta=write_pack_mcmeta,
             )
             out_files.append(ogg_path)

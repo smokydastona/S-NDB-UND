@@ -701,8 +701,8 @@ def _generate(
 
 
 def build_demo() -> gr.Blocks:
-    with gr.Blocks(title="Sound Generator") as demo:
-        gr.Markdown("# Prompt → Sound Effect")
+    with gr.Blocks(title="S-NDB-UND") as demo:
+        gr.Markdown("# S-NDB-UND — Prompt → Sound Effect")
         with gr.Accordion("Engine & preset", open=True):
             engine = gr.Radio(["diffusers", "stable_audio_open", "rfxgen", "samplelib", "synth", "layered"], value="diffusers", label="Engine")
             with gr.Row():

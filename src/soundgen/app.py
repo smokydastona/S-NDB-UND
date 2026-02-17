@@ -27,16 +27,16 @@ def _hide_console_window_windows() -> None:
 
 def _print_help() -> None:
     print(
-        "Sound Generator (single app)\n\n"
+        "S-NDB-UND (single app)\n\n"
         "Usage:\n"
-        "  soundgen.exe                  (opens the desktop UI)\n"
-        "  soundgen.exe generate <args>  (CLI generator; same flags as python -m soundgen.generate)\n"
-        "  soundgen.exe web <args>       (Gradio UI in your browser)\n"
-        "  soundgen.exe desktop <args>   (UI in an embedded desktop window)\n"
-        "  soundgen.exe mobset <args>    (Minecraft mob soundset generator)\n\n"
+        "  S-NDB-UND.exe                  (opens the desktop UI)\n"
+        "  S-NDB-UND.exe generate <args>  (CLI generator; same flags as python -m soundgen.generate)\n"
+        "  S-NDB-UND.exe web <args>       (Gradio UI in your browser)\n"
+        "  S-NDB-UND.exe desktop <args>   (UI in an embedded desktop window)\n"
+        "  S-NDB-UND.exe mobset <args>    (Minecraft mob soundset generator)\n\n"
         "Help:\n"
-        "  soundgen.exe mobset --help\n"
-        "  soundgen.exe generate --help\n"
+        "  S-NDB-UND.exe mobset --help\n"
+        "  S-NDB-UND.exe generate --help\n"
     )
 
 

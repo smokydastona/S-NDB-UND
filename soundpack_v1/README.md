@@ -1,6 +1,6 @@
-# Sound Generator — Demo Sound Pack v1
+# S-NDB-UND — Demo Sound Pack v1
 
-This folder is an **in-repo demo pack** built with `soundgen`.
+This folder is an **in-repo demo pack** built with **S-NDB-UND** (Python module name: `soundgen`).
 
 ## What you get
 - `wav/` — source WAVs (good for editing)
