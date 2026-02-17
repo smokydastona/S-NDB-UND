@@ -1009,7 +1009,7 @@ def build_demo() -> gr.Blocks:
                     gr.update(visible=(is_synth or is_layered), open=False),
                     gr.update(visible=is_layered),
                     gr.update(visible=is_layered),
-                    gr.update(visible=is_layered, open=False),
+                    gr.update(visible=is_layered, open=is_layered),
                 )
 
             engine.change(
