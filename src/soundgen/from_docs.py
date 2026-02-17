@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p.add_argument("--engine", choices=["rfxgen", "diffusers"], default="rfxgen")
+    p.add_argument(
+        "--prefer-doc-manifest",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "If true (default), when a doc entry includes a generated 'Manifest' line, use its engine/seconds/"
+            "sound_path/variants/etc. CLI flags act as defaults/fallbacks."
+        ),
+    )
     p.add_argument("--namespace", default="soundgen")
     p.add_argument(
         "--event-prefix",
@@ -86,6 +96,13 @@ def _slug(s: str) -> str:
     s = re.sub(r"[^a-z0-9_\-.]", "_", s)
     s = re.sub(r"_+", "_", s).strip("_")
     return s[:64] or "doc"
+
+
+def _stable_seed(*parts: str) -> int:
+    """Deterministic seed from text parts (keeps families unique and repeatable)."""
+
+    h = hashlib.sha256("|".join(p for p in parts if p).encode("utf-8", errors="ignore")).hexdigest()
+    return int(h[:8], 16)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -150,28 +167,72 @@ def main(argv: list[str] | None = None) -> int:
                 if not event:
                     continue
 
-                # Compute a stable sound_path from the event, unless user asked for a fixed prefix.
-                # Convert dots to folders to keep packs tidy.
-                event_for_path = event.replace(":", ".")
-                sound_path = (args.sound_path_prefix or "generated/docs")
-                sound_path = f"{sound_path}/{event_for_path.replace('.', '/')}"
+                # Prefer doc-provided manifest settings when available.
+                prefer_doc = bool(args.prefer_doc_manifest)
+                engine = (str(e.get("engine") or "").strip() if prefer_doc else "") or args.engine
+                seconds_s = (str(e.get("seconds") or "").strip() if prefer_doc else "")
+                variants_s = (str(e.get("variants") or "").strip() if prefer_doc else "")
+                sound_path_from_doc = (str(e.get("sound_path") or "").strip() if prefer_doc else "")
 
-                subtitle = args.subtitle or e.get("title") or doc.stem
+                # sound_path: doc manifest wins; else computed from event.
+                if sound_path_from_doc:
+                    sound_path = sound_path_from_doc
+                else:
+                    event_for_path = event.replace(":", ".")
+                    sound_path_prefix = (args.sound_path_prefix or "generated/docs")
+                    sound_path = f"{sound_path_prefix}/{event_for_path.replace('.', '/')}"
+
+                # Subtitles: prefer explicit doc subtitle text/key if present.
+                subtitle_key = (str(e.get("subtitle_key") or "").strip() if prefer_doc else "") or None
+                subtitle = args.subtitle or (str(e.get("subtitle") or "").strip() if prefer_doc else "")
+                subtitle = subtitle or (str(e.get("title") or "").strip() if prefer_doc else "") or doc.stem
+
+                # Seeds: if user didn't pass --seed, derive a stable unique seed per (namespace,event).
+                seed = args.seed
+                if seed is None:
+                    seed_s = (str(e.get("seed") or "").strip() if prefer_doc else "")
+                    if seed_s:
+                        try:
+                            seed = int(seed_s)
+                        except ValueError:
+                            seed = None
+                if seed is None:
+                    seed = _stable_seed(namespace, event)
+
+                seconds = float(args.seconds)
+                if seconds_s:
+                    try:
+                        seconds = float(seconds_s)
+                    except ValueError:
+                        pass
+
+                variants = max(1, int(args.variants))
+                if variants_s:
+                    try:
+                        variants = max(1, int(float(variants_s)))
+                    except ValueError:
+                        pass
+
+                # Per-entry overrides (optional).
+                preset = args.preset
+                if prefer_doc and e.get("preset"):
+                    preset = str(e.get("preset") or "").strip() or preset
 
                 item = ManifestItem(
                     prompt=str(e.get("prompt") or "").strip(),
-                    engine=args.engine,
+                    engine=engine,
                     namespace=namespace,
                     event=event,
                     sound_path=sound_path,
-                    seconds=float(args.seconds),
-                    seed=args.seed,
-                    preset=args.preset,
-                    variants=max(1, int(args.variants)),
+                    seconds=float(seconds),
+                    seed=int(seed) if seed is not None else None,
+                    preset=preset,
+                    variants=int(variants),
                     weight=max(1, int(args.weight)),
                     volume=float(args.volume),
                     pitch=float(args.pitch),
                     subtitle=str(subtitle) if subtitle else None,
+                    subtitle_key=subtitle_key,
                     post=bool(args.post),
                     tags=("from_doc", doc.suffix.lower().lstrip(".")),
                 )

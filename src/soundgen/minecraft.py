@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+from .io_utils import find_ffmpeg
 
 
 @dataclass(frozen=True)
@@ -72,24 +72,6 @@ def upsert_lang_entry(pack_root: Path, namespace: str, key: str, value: str, *, 
     return lang_path
 
 
-def _ffmpeg_path() -> str:
-    found = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
-    if found:
-        return found
-
-    # WinGet installs (e.g. Gyan.FFmpeg) may not be visible until a new shell.
-    local_appdata = os.getenv("LOCALAPPDATA")
-    if local_appdata:
-        base = Path(local_appdata) / "Microsoft" / "WinGet" / "Packages"
-        if base.exists():
-            for p in base.glob("Gyan.FFmpeg_*/*/bin/ffmpeg.exe"):
-                return str(p)
-
-    raise FileNotFoundError(
-        "ffmpeg not found on PATH. Install ffmpeg (or add it to PATH) to export Minecraft .ogg files."
-    )
-
-
 def wav_to_minecraft_ogg(
     wav_path: Path,
     ogg_path: Path,
@@ -103,7 +85,7 @@ def wav_to_minecraft_ogg(
     # Use Vorbis (most compatible for Minecraft resource packs).
     # -qscale:a sets VBR quality (0-10)
     cmd = [
-        _ffmpeg_path(),
+        find_ffmpeg(),
         "-y",
         "-hide_banner",
         "-loglevel",

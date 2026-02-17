@@ -5,23 +5,24 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import resample_poly
 
-from .audiogen_backend import GenerationParams, generate_audio
-from .io_utils import read_wav_mono, write_wav
+from .engine_registry import GeneratedWav, generate_wav
+from .io_utils import convert_audio_with_ffmpeg, read_wav_mono, write_wav
 from .postprocess import PostProcessParams, post_process_audio
 from .qa import compute_metrics, detect_long_tail
-from .rfxgen_backend import RfxGenParams, generate_with_rfxgen
-from .replicate_backend import ReplicateParams, generate_with_replicate
 from .minecraft import export_wav_to_minecraft_pack
+from .credits import upsert_pack_credits, write_sidecar_credits
+from .controls import map_prompt_to_controls
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Generate a sound effect WAV from a text prompt.")
     p.add_argument(
         "--engine",
-        choices=["diffusers", "rfxgen", "replicate"],
+        choices=["diffusers", "rfxgen", "replicate", "samplelib", "synth"],
         default="diffusers",
-        help="Generation engine: diffusers (AI), rfxgen (procedural presets), or replicate (paid API).",
+        help="Generation engine: diffusers (AI), rfxgen (procedural presets), replicate (paid API), samplelib (sample library zips), or synth (DSP).",
     )
     p.add_argument("--prompt", required=True, help="Text prompt describing the sound.")
     p.add_argument("--seconds", type=float, default=3.0, help="Duration in seconds.")
@@ -41,6 +42,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--rfxgen-path",
         default=None,
         help="Path to rfxgen executable (e.g. tools/rfxgen/rfxgen.exe). If omitted, uses PATH.",
+    )
+
+    # Sample library engine (ZIP repos)
+    p.add_argument(
+        "--library-zip",
+        action="append",
+        default=None,
+        help="Path to a ZIP sound library. Can be specified multiple times. Default: .examples/sound libraies/*.zip",
+    )
+    p.add_argument(
+        "--library-pitch-min",
+        type=float,
+        default=0.85,
+        help="For samplelib: min random pitch factor (default 0.85).",
+    )
+    p.add_argument(
+        "--library-pitch-max",
+        type=float,
+        default=1.20,
+        help="For samplelib: max random pitch factor (default 1.20).",
+    )
+    p.add_argument(
+        "--library-mix-count",
+        type=int,
+        default=1,
+        help="For samplelib: number of samples to mix (1 or 2). Default 1.",
+    )
+    p.add_argument(
+        "--library-index",
+        default="library/samplelib_index.json",
+        help="For samplelib: persistent index cache path. Set to empty string to disable.",
     )
 
     # Replicate (optional paid API backend)
@@ -139,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Post-processing / QA
     p.add_argument("--post", action="store_true", help="Enable post-processing (trim/fade/normalize/EQ).")
+    p.add_argument(
+        "--map-controls",
+        action="store_true",
+        help="Map common prompt keywords to control hints (loud/soft/bright/muffled/clicky/etc).",
+    )
     p.add_argument("--no-trim", action="store_true", help="Disable trimming silence (post-processing).")
     p.add_argument("--silence-threshold-db", type=float, default=-40.0, help="Trim threshold in dBFS.")
     p.add_argument("--silence-padding-ms", type=int, default=30, help="Padding kept around trimmed audio.")
@@ -153,7 +190,42 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--highpass-hz", type=float, default=40.0, help="Highpass cutoff. Use 0 to disable.")
     p.add_argument("--lowpass-hz", type=float, default=16000.0, help="Lowpass cutoff. Use 0 to disable.")
 
+    # Synth engine (DSP) controls
+    p.add_argument("--synth-waveform", default="sine", help="synth waveform: sine|square|saw|triangle|noise")
+    p.add_argument("--synth-freq", type=float, default=440.0, help="synth base frequency (Hz)")
+    p.add_argument("--synth-attack-ms", type=float, default=5.0)
+    p.add_argument("--synth-decay-ms", type=float, default=80.0)
+    p.add_argument("--synth-sustain", type=float, default=0.35)
+    p.add_argument("--synth-release-ms", type=float, default=120.0)
+    p.add_argument("--synth-noise-mix", type=float, default=0.05)
+    p.add_argument("--synth-drive", type=float, default=0.0)
+
     p.add_argument("--out", default="outputs/out.wav", help="Output WAV path.")
+
+    # Export format options (non-Minecraft)
+    p.add_argument(
+        "--out-format",
+        choices=["wav", "flac", "mp3", "ogg"],
+        default=None,
+        help="Non-Minecraft: output format. If omitted, inferred from --out extension (default wav).",
+    )
+    p.add_argument(
+        "--out-sample-rate",
+        type=int,
+        default=None,
+        help="Non-Minecraft: resample output to this sample rate (e.g. 44100).",
+    )
+    p.add_argument(
+        "--wav-subtype",
+        choices=["PCM_16", "PCM_24", "FLOAT"],
+        default="PCM_16",
+        help="Non-Minecraft WAV encoding subtype (default PCM_16).",
+    )
+    p.add_argument(
+        "--mp3-bitrate",
+        default="192k",
+        help="Non-Minecraft MP3 bitrate for --out-format mp3 (default 192k).",
+    )
     return p
 
 
@@ -173,16 +245,46 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out)
     slug = _slug_from_prompt(args.prompt)
 
+    def _infer_out_format() -> str:
+        if args.out_format:
+            return str(args.out_format)
+        suf = out_path.suffix.lower().lstrip(".")
+        if suf in {"wav", "flac", "mp3", "ogg"}:
+            return suf
+        return "wav"
+
+    def _normalize_out_path(fmt: str) -> Path:
+        fmt = fmt.lower()
+        if out_path.suffix.lower().lstrip(".") == fmt:
+            return out_path
+        if out_path.suffix:
+            return out_path.with_suffix("." + fmt)
+        return Path(str(out_path) + "." + fmt)
+
+    hints = map_prompt_to_controls(args.prompt) if args.map_controls else None
+
     def _pp_params() -> PostProcessParams:
+        rms = float(args.normalize_rms_db)
+        hp = float(args.highpass_hz)
+        lp = float(args.lowpass_hz)
+
+        if hints is not None:
+            if hints.loudness_rms_db is not None:
+                rms = float(hints.loudness_rms_db)
+            if hints.highpass_hz is not None:
+                hp = float(hints.highpass_hz)
+            if hints.lowpass_hz is not None:
+                lp = float(hints.lowpass_hz)
+
         return PostProcessParams(
             trim_silence=(not args.no_trim),
             silence_threshold_db=float(args.silence_threshold_db),
             silence_padding_ms=int(args.silence_padding_ms),
             fade_ms=int(args.fade_ms),
-            normalize_rms_db=(None if float(args.normalize_rms_db) == 0.0 else float(args.normalize_rms_db)),
+            normalize_rms_db=(None if float(rms) == 0.0 else float(rms)),
             normalize_peak_db=float(args.normalize_peak_db),
-            highpass_hz=(None if float(args.highpass_hz) == 0.0 else float(args.highpass_hz)),
-            lowpass_hz=(None if float(args.lowpass_hz) == 0.0 else float(args.lowpass_hz)),
+            highpass_hz=(None if float(hp) == 0.0 else float(hp)),
+            lowpass_hz=(None if float(lp) == 0.0 else float(lp)),
         )
 
     def _qa_info(audio: np.ndarray, sr: int) -> str:
@@ -195,16 +297,17 @@ def main(argv: list[str] | None = None) -> int:
         flag_s = (" " + " ".join(flags)) if flags else ""
         return f"qa: peak={m.peak:.3f} rms={m.rms:.3f}{flag_s}".strip()
 
-    def _maybe_postprocess(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
-        if not args.post:
-            return audio, _qa_info(audio, sr)
+    def _pp_apply(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
         processed, rep = post_process_audio(audio, sr, _pp_params())
         info = _qa_info(processed, sr)
         return processed, f"post: trimmed={rep.trimmed} {info}".strip()
 
-    def export_if_minecraft(wav_path: Path, *, sound_path: str) -> None:
+    def _qa_only(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
+        return audio, _qa_info(audio, sr)
+
+    def export_if_minecraft(wav_path: Path, *, sound_path: str) -> Path | None:
         if not args.minecraft:
-            return
+            return None
 
         pack_root = Path(args.pack_root)
         namespace = args.namespace
@@ -231,115 +334,151 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"Minecraft export: {ogg_path}")
         print(f"Minecraft playsound id: {namespace}:{event}")
+        return ogg_path
 
-    if args.engine == "rfxgen":
-        if args.minecraft:
-            with tempfile.TemporaryDirectory() as tmp:
-                base_sound_path = args.sound_path or f"generated/{slug}"
-                variants = max(1, int(args.variants))
+    def _write_credits(*, sound_path: str, wav_path: Path | None, ogg_path: Path | None, generated: GeneratedWav) -> None:
+        data: dict[str, object] = {
+            "engine": str(args.engine),
+            "prompt": str(args.prompt),
+            "sound_path": str(sound_path),
+            **{k: v for k, v in generated.credits_extra.items() if v is not None},
+        }
+        if generated.sources:
+            data["sources"] = list(generated.sources)
 
-                for i in range(variants):
-                    suffix = f"_{i+1:02d}" if variants > 1 else ""
-                    tmp_wav = Path(tmp) / f"rfxgen{suffix}.wav"
-                    rfx_params = RfxGenParams(
-                        prompt=args.prompt,
-                        out_path=tmp_wav,
-                        rfxgen_path=Path(args.rfxgen_path) if args.rfxgen_path else None,
-                        preset=args.preset,
-                    )
-                    written = generate_with_rfxgen(rfx_params)
-
-                    if args.post:
-                        a, sr = read_wav_mono(written)
-                        a, info = _maybe_postprocess(a, sr)
-                        write_wav(written, a, sr)
-                        print(info)
-
-                    export_if_minecraft(written, sound_path=f"{base_sound_path}{suffix}")
-        else:
-            rfx_params = RfxGenParams(
-                prompt=args.prompt,
-                out_path=out_path,
-                rfxgen_path=Path(args.rfxgen_path) if args.rfxgen_path else None,
-                preset=args.preset,
+        if wav_path is not None and not args.minecraft:
+            write_sidecar_credits(Path(wav_path), data)
+        if ogg_path is not None and args.minecraft:
+            pack_root = Path(args.pack_root)
+            namespace = args.namespace
+            event = args.event or f"generated.{slug}"
+            upsert_pack_credits(
+                pack_root=pack_root,
+                namespace=namespace,
+                event=event,
+                sound_path=sound_path,
+                credits=data,
             )
-            written = generate_with_rfxgen(rfx_params)
-            if args.post:
-                a, sr = read_wav_mono(written)
-                a, info = _maybe_postprocess(a, sr)
-                write_wav(written, a, sr)
-                print(info)
-            print(f"Wrote {written}")
-        return 0
+    # samplelib defaults
+    default_zips = sorted(Path(".examples").joinpath("sound libraies").glob("*.zip"))
+    zip_args = args.library_zip if args.library_zip else [str(p) for p in default_zips]
+    if args.engine == "samplelib" and not zip_args:
+        raise FileNotFoundError(
+            "No --library-zip provided and no default zips found at .examples/sound libraies/*.zip"
+        )
 
-    if args.engine == "replicate":
-        # Replicate returns a file (typically wav) at out_path.
-        rp = ReplicateParams(
+    index_path = None if str(args.library_index).strip() == "" else Path(str(args.library_index))
+
+    def _postprocess_fn_for_engine(engine: str):
+        if args.post:
+            return _pp_apply
+        if engine in {"diffusers", "synth"}:
+            return _qa_only
+        return None
+
+    def _gen_one(*, out_wav: Path, seed: int | None) -> GeneratedWav:
+        # Apply hint overrides for synth controls.
+        synth_attack = float(hints.attack_ms) if hints and hints.attack_ms is not None else float(args.synth_attack_ms)
+        synth_release = float(hints.release_ms) if hints and hints.release_ms is not None else float(args.synth_release_ms)
+        synth_pitch_min = float(hints.pitch_min) if hints and hints.pitch_min is not None else 0.90
+        synth_pitch_max = float(hints.pitch_max) if hints and hints.pitch_max is not None else 1.10
+        synth_lp = float(hints.lowpass_hz) if hints and hints.lowpass_hz is not None else 16000.0
+        synth_hp = float(hints.highpass_hz) if hints and hints.highpass_hz is not None else 30.0
+        synth_drive = float(hints.drive) if hints and hints.drive is not None else float(args.synth_drive)
+
+        return generate_wav(
+            args.engine,
             prompt=args.prompt,
             seconds=float(args.seconds),
-            out_path=out_path,
-            model=str(args.replicate_model or "").strip(),
-            api_token=(str(args.replicate_token).strip() if args.replicate_token else None),
-            extra_input_json=(str(args.replicate_input_json) if args.replicate_input_json else None),
+            seed=seed,
+            out_wav=out_wav,
+            postprocess_fn=_postprocess_fn_for_engine(args.engine),
+            device=str(args.device),
+            model=str(args.model),
+            preset=args.preset,
+            rfxgen_path=(Path(args.rfxgen_path) if args.rfxgen_path else None),
+            replicate_model=args.replicate_model,
+            replicate_token=args.replicate_token,
+            replicate_input_json=args.replicate_input_json,
+            library_zips=tuple(Path(p) for p in zip_args),
+            library_pitch_min=float(args.library_pitch_min),
+            library_pitch_max=float(args.library_pitch_max),
+            library_mix_count=int(args.library_mix_count),
+            library_index_path=index_path,
+            synth_waveform=str(args.synth_waveform),
+            synth_freq_hz=float(args.synth_freq),
+            synth_attack_ms=synth_attack,
+            synth_decay_ms=float(args.synth_decay_ms),
+            synth_sustain_level=float(args.synth_sustain),
+            synth_release_ms=synth_release,
+            synth_noise_mix=float(args.synth_noise_mix),
+            synth_drive=synth_drive,
+            synth_pitch_min=synth_pitch_min,
+            synth_pitch_max=synth_pitch_max,
+            synth_lowpass_hz=synth_lp,
+            synth_highpass_hz=synth_hp,
+            sample_rate=44100,
         )
-        written = generate_with_replicate(rp)
 
-        # Optional post-processing (works if written is WAV)
-        if args.post and written.suffix.lower() == ".wav":
-            a, sr = read_wav_mono(written)
-            a, info = _maybe_postprocess(a, sr)
-            write_wav(written, a, sr)
-            print(info)
-
-        if args.minecraft:
-            # Replicate export requires ffmpeg (wav->ogg) for Minecraft.
-            export_if_minecraft(written, sound_path=args.sound_path or f"generated/{slug}")
-        else:
-            print(f"Wrote {written}")
-        return 0
-
-    params = GenerationParams(
-        prompt=args.prompt,
-        seconds=args.seconds,
-        seed=args.seed,
-        device=args.device,
-        model=args.model,
-    )
-
-    audio, sr = generate_audio(params)
-    audio, info = _maybe_postprocess(audio, sr)
     if args.minecraft:
         with tempfile.TemporaryDirectory() as tmp:
             base_sound_path = args.sound_path or f"generated/{slug}"
             variants = max(1, int(args.variants))
-
-            # If user supplied a seed, use it as base; otherwise, use sequential seeds.
             base_seed = args.seed if args.seed is not None else 1337
 
             for i in range(variants):
                 suffix = f"_{i+1:02d}" if variants > 1 else ""
-                tmp_wav = Path(tmp) / f"diffusers{suffix}.wav"
+                tmp_wav = Path(tmp) / f"{args.engine}{suffix}.wav"
+                seed_i = (int(base_seed) + i) if args.engine in {"diffusers", "samplelib", "synth"} else None
+                # Preserve previous behavior: replicate writes to --out even when --minecraft.
+                if args.engine == "replicate":
+                    tmp_wav = out_path
+                generated = _gen_one(out_wav=tmp_wav, seed=seed_i)
+                if generated.post_info:
+                    print(generated.post_info)
 
-                if variants > 1:
-                    v_params = GenerationParams(
-                        prompt=args.prompt,
-                        seconds=args.seconds,
-                        seed=int(base_seed) + i,
-                        device=args.device,
-                        model=args.model,
-                    )
-                    v_audio, v_sr = generate_audio(v_params)
-                    v_audio, v_info = _maybe_postprocess(v_audio, v_sr)
-                    print(v_info)
-                    write_wav(tmp_wav, v_audio, v_sr)
-                else:
-                    write_wav(tmp_wav, audio, sr)
+                sp = f"{base_sound_path}{suffix}"
+                ogg = export_if_minecraft(generated.wav_path, sound_path=sp)
+                _write_credits(sound_path=sp, wav_path=None, ogg_path=ogg, generated=generated)
+        return 0
 
-                export_if_minecraft(tmp_wav, sound_path=f"{base_sound_path}{suffix}")
-    else:
-        write_wav(out_path, audio, sr)
-        print(info)
-        print(f"Wrote {out_path} ({len(audio)/sr:.2f}s @ {sr}Hz)")
+    # Non-minecraft: generate WAV then optionally resample/convert.
+    fmt = _infer_out_format()
+    final_path = _normalize_out_path(fmt)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        tmp_wav = tmp_dir / "generated.wav"
+        generated = _gen_one(out_wav=tmp_wav, seed=args.seed)
+        if generated.post_info:
+            print(generated.post_info)
+
+        src_wav = Path(generated.wav_path)
+        out_sr = int(args.out_sample_rate) if args.out_sample_rate else None
+
+        # If final is wav, rewrite with optional resample + subtype.
+        if fmt == "wav":
+            audio, sr = read_wav_mono(src_wav)
+            if out_sr is not None and out_sr > 0 and out_sr != sr:
+                audio = resample_poly(audio, out_sr, sr).astype(np.float32, copy=False)
+                sr = out_sr
+            write_wav(final_path, audio, sr, subtype=str(args.wav_subtype))
+        else:
+            # Convert via ffmpeg (optionally resampling).
+            convert_audio_with_ffmpeg(
+                src_wav,
+                final_path,
+                sample_rate=out_sr,
+                channels=1,
+                out_format=fmt,
+                ogg_quality=int(args.ogg_quality),
+                mp3_bitrate=str(args.mp3_bitrate),
+            )
+
+        print(f"Wrote {final_path}")
+
+        sp = str(args.sound_path or f"generated/{slug}")
+        _write_credits(sound_path=sp, wav_path=final_path, ogg_path=None, generated=generated)
     return 0
 
 

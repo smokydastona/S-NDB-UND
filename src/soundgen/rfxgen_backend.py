@@ -36,11 +36,30 @@ def _infer_preset_from_prompt(prompt: str) -> str:
         return "coin"
     if any(k in p for k in ("laser", "blaster", "zap", "pew", "sci-fi")):
         return "laser"
-    if any(k in p for k in ("explosion", "boom", "blast", "grenade")):
+    if any(k in p for k in ("explosion", "boom", "blast", "grenade", "thunder", "storm")):
         return "explosion"
     if any(k in p for k in ("powerup", "power up", "upgrade", "level up")):
         return "powerup"
-    if any(k in p for k in ("hit", "hurt", "damage", "impact", "punch")):
+    if any(
+        k in p
+        for k in (
+            "hit",
+            "hurt",
+            "damage",
+            "impact",
+            "punch",
+            "slam",
+            "smash",
+            "thud",
+            "crash",
+            "collapse",
+            "debris",
+            "rumble",
+            "grind",
+            "grinding",
+            "stone",
+        )
+    ):
         return "hit"
     if any(k in p for k in ("jump", "hop", "leap")):
         return "jump"

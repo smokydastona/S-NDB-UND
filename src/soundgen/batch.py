@@ -5,12 +5,12 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .audiogen_backend import GenerationParams, generate_audio
-from .io_utils import read_wav_mono, write_wav
+from .engine_registry import generate_wav
 from .library import append_record, make_record
 from .manifest import ManifestItem, load_manifest
 from .minecraft import export_wav_to_minecraft_pack
 from .postprocess import PostProcessParams, post_process_audio
+from .credits import upsert_pack_credits
 
 
 def _default_sound_path(namespace: str, event: str) -> str:
@@ -27,6 +27,8 @@ def _pp_params() -> PostProcessParams:
 def _maybe_postprocess_wav(wav_path: Path, *, enabled: bool) -> None:
     if not enabled:
         return
+    from .io_utils import read_wav_mono, write_wav
+
     audio, sr = read_wav_mono(wav_path)
     processed, _ = post_process_audio(audio, sr, _pp_params())
     write_wav(wav_path, processed, sr)
@@ -48,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="Diffusers device")
     p.add_argument("--model", default="cvssp/audioldm2", help="Diffusers model id")
     p.add_argument("--rfxgen-path", default=None, help="Optional path to rfxgen.exe")
+
+    # Sample library engine
+    p.add_argument(
+        "--library-zip",
+        action="append",
+        default=None,
+        help="Path to a ZIP sound library (for engine=samplelib). Can be specified multiple times. Default: .examples/sound libraies/*.zip",
+    )
+    p.add_argument("--library-pitch-min", type=float, default=0.85)
+    p.add_argument("--library-pitch-max", type=float, default=1.20)
 
     return p
 
@@ -74,40 +86,45 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace) -> list[Path]:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
 
+        default_zips = sorted(Path(".examples").joinpath("sound libraies").glob("*.zip"))
+        zip_args = args.library_zip if args.library_zip else [str(p) for p in default_zips]
+
         for i in range(max(1, int(item.variants))):
             suffix = f"_{i+1:02d}" if item.variants > 1 else ""
             sound_path = f"{base_sound_path}{suffix}"
 
             tmp_wav = tmp_dir / f"{namespace}_{event.replace('.', '_')}{suffix}.wav"
 
-            if item.engine == "diffusers":
-                gp = GenerationParams(
-                    prompt=item.prompt,
-                    seconds=float(item.seconds),
-                    seed=(int(item.seed) + i) if item.seed is not None else None,
-                    device=args.device,
-                    model=args.model,
+            if item.engine == "samplelib" and not zip_args:
+                raise FileNotFoundError(
+                    "engine=samplelib but no --library-zip provided and no default zips found at .examples/sound libraies/*.zip"
                 )
-                audio, sr = generate_audio(gp)
-                if item.post:
-                    audio, _ = post_process_audio(audio, sr, _pp_params())
-                write_wav(tmp_wav, audio, sr)
-            elif item.engine == "rfxgen":
-                from .rfxgen_backend import RfxGenParams, generate_with_rfxgen
 
-                rp = RfxGenParams(
-                    prompt=item.prompt,
-                    out_path=tmp_wav,
-                    preset=item.preset,
-                    rfxgen_path=Path(args.rfxgen_path) if args.rfxgen_path else None,
-                )
-                written = generate_with_rfxgen(rp)
-                _maybe_postprocess_wav(written, enabled=item.post)
-            else:
-                raise ValueError(f"Unknown engine: {item.engine}")
+            def _pp(audio, sr):
+                processed, _ = post_process_audio(audio, sr, _pp_params())
+                return processed, "post"
+
+            generated = generate_wav(
+                item.engine,
+                prompt=item.prompt,
+                seconds=float(item.seconds),
+                seed=(int(item.seed) + i) if item.seed is not None else None,
+                out_wav=tmp_wav,
+                postprocess_fn=(_pp if item.post else None),
+                device=str(args.device),
+                model=str(args.model),
+                preset=item.preset,
+                rfxgen_path=(Path(args.rfxgen_path) if args.rfxgen_path else None),
+                library_zips=tuple(Path(p) for p in zip_args),
+                library_pitch_min=float(args.library_pitch_min),
+                library_pitch_max=float(args.library_pitch_max),
+                sample_rate=44100,
+            )
+
+            sources: tuple[dict, ...] = tuple(generated.sources)
 
             ogg_path = export_wav_to_minecraft_pack(
-                tmp_wav,
+                generated.wav_path,
                 pack_root=pack_root,
                 namespace=namespace,
                 event=event,
@@ -125,6 +142,20 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace) -> list[Path]:
             )
             out_files.append(ogg_path)
 
+            # Pack credits for all engines.
+            credits: dict = {"engine": item.engine, "prompt": item.prompt}
+            credits.update({k: v for k, v in generated.credits_extra.items() if v is not None})
+            if sources:
+                credits["sources"] = list(sources)
+
+            upsert_pack_credits(
+                pack_root=pack_root,
+                namespace=namespace,
+                event=event,
+                sound_path=sound_path,
+                credits=credits,
+            )
+
             append_record(
                 Path(args.catalog),
                 make_record(
@@ -135,6 +166,7 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace) -> list[Path]:
                     sound_path=sound_path,
                     output_file=ogg_path,
                     tags=item.tags,
+                    sources=sources,
                     seconds=item.seconds,
                     seed=item.seed,
                     preset=item.preset,

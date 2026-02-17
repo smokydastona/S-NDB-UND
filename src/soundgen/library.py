@@ -18,6 +18,9 @@ class CatalogRecord:
     output_file: str
     tags: tuple[str, ...] = ()
 
+    # Optional per-sound attribution info (e.g. sample library source).
+    sources: tuple[dict[str, Any], ...] = ()
+
     seconds: Optional[float] = None
     seed: Optional[int] = None
     preset: Optional[str] = None
@@ -43,6 +46,7 @@ def make_record(
     sound_path: str,
     output_file: Path,
     tags: tuple[str, ...] = (),
+    sources: tuple[dict[str, Any], ...] = (),
     seconds: Optional[float] = None,
     seed: Optional[int] = None,
     preset: Optional[str] = None,
@@ -56,6 +60,7 @@ def make_record(
         sound_path=str(sound_path),
         output_file=str(output_file),
         tags=tuple(tags),
+        sources=tuple(sources),
         seconds=seconds,
         seed=seed,
         preset=preset,

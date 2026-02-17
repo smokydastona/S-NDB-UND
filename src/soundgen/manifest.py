@@ -10,7 +10,7 @@ from typing import Any, Optional
 @dataclass(frozen=True)
 class ManifestItem:
     prompt: str
-    engine: str = "rfxgen"  # diffusers | rfxgen
+    engine: str = "rfxgen"  # diffusers | rfxgen | samplelib
 
     namespace: str = "soundgen"
     event: str = "generated.sound"

@@ -7,6 +7,11 @@ from pathlib import Path
 _MD_ENTRY_HEADING_RE = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
 _MD_PROMPT_RE = re.compile(r"^\s*-\s*\*\*Prompt\*\*:\s*(.+?)\s*$", re.MULTILINE)
 _MD_SOUNDEVENT_RE = re.compile(r"^\s*-\s*\*\*SoundEvent\*\*:\s*`([^`]+)`\s*$", re.MULTILINE)
+_MD_MANIFEST_RE = re.compile(r"^\s*-\s*\*\*Manifest\*\*:\s*(.+?)\s*$", re.MULTILINE)
+_MD_SUBTITLE_KEY_RE = re.compile(
+    r"^\s*-\s*\*\*(Suggested|Existing) subtitle key\*\*:\s*`([^`]+)`\s*(?:\((.+?)\))?\s*$",
+    re.MULTILINE,
+)
 
 
 class UnsupportedDocumentError(RuntimeError):
@@ -76,8 +81,12 @@ def extract_sound_prompts(text: str) -> list[dict[str, str]]:
     - Contains a `- **Prompt**: "..."` line
     - May contain `- **SoundEvent**: `<namespace>:<event>`
 
-    Returns a list of dicts like:
-      {"title": ..., "prompt": ..., "namespace": ..., "event": ...}
+        Returns a list of dicts like:
+            {
+                "title": ..., "prompt": ..., "namespace": ..., "event": ...,
+                "engine": ..., "seconds": ..., "variants": ..., "sound_path": ...,
+                "subtitle_key": ..., "subtitle": ...,
+            }
 
     If no multi-prompt structure is detected, returns an empty list.
     """
@@ -126,14 +135,46 @@ def extract_sound_prompts(text: str) -> list[dict[str, str]]:
             # In pregen docs, the `###` heading is typically the desired sounds.json key.
             event = title
 
-        entries.append(
-            {
-                "title": title,
-                "prompt": raw_prompt,
-                "namespace": namespace,
-                "event": event,
-            }
-        )
+        parsed: dict[str, str] = {
+            "title": title,
+            "prompt": raw_prompt,
+            "namespace": namespace,
+            "event": event,
+        }
+
+        # Optional: parse the generated manifest summary line.
+        mm = _MD_MANIFEST_RE.search(block)
+        if mm:
+            manifest_text = (mm.group(1) or "").strip()
+            for part in [p.strip() for p in manifest_text.split(",") if p.strip()]:
+                if "=" not in part:
+                    continue
+                k, v = part.split("=", 1)
+                k = k.strip().lower()
+                v = v.strip()
+                if v.startswith("`") and v.endswith("`"):
+                    v = v[1:-1].strip()
+                if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                    v = v[1:-1].strip()
+                if not v:
+                    continue
+                if k in {"engine", "seconds", "variants", "sound_path", "seed", "preset", "weight", "volume", "pitch"}:
+                    parsed[k] = v
+
+        # Optional: parse subtitle key + suggested English text.
+        sm = _MD_SUBTITLE_KEY_RE.search(block)
+        if sm:
+            parsed["subtitle_key"] = (sm.group(2) or "").strip()
+            subtitle = (sm.group(3) or "").strip()
+            # Captured text often includes quotes.
+            if (subtitle.startswith('"') and subtitle.endswith('"')) or (
+                subtitle.startswith("'") and subtitle.endswith("'")
+            ):
+                subtitle = subtitle[1:-1].strip()
+            if subtitle:
+                parsed["subtitle"] = subtitle
+
+        entries.append(parsed)
 
     # Only treat as multi-prompt if we found 2+ entries.
     return entries if len(entries) >= 2 else []

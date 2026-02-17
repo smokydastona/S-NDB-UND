@@ -2,10 +2,12 @@
 
 Generate short sound effects from a text prompt.
 
-This project supports two engines:
+This project supports four engines:
 
 - **diffusers**: AI prompt-to-audio (AudioLDM2)
 - **rfxgen**: procedural chiptune-style SFX presets (coin/laser/explosion/etc)
+- **samplelib**: picks + randomizes samples from ZIP sound libraries (uses ffmpeg to decode)
+- **synth**: DSP synth engine (waveforms + ADSR + filters + drive)
 
 ## Setup (Windows)
 
@@ -28,6 +30,23 @@ pip install -r requirements.txt
 
 ```powershell
 	python -m soundgen.generate --prompt "laser zap" --seconds 2.5 --out outputs\laser.wav
+```
+
+### Export format options (non-Minecraft)
+
+By default, `--out` writes a 16-bit PCM WAV. You can change WAV encoding or export other formats:
+
+```powershell
+# 24-bit WAV
+python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.4 --out outputs\click.wav --wav-subtype PCM_24
+
+# Resample output
+python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.4 --out outputs\click_48k.wav --out-sample-rate 48000
+
+# Export MP3 / OGG / FLAC (requires ffmpeg on PATH)
+python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.4 --out outputs\click.mp3 --out-format mp3 --mp3-bitrate 192k
+python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.4 --out outputs\click.ogg --out-format ogg
+python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.4 --out outputs\click.flac --out-format flac
 ```
 
 ### Use rfxgen presets (optional)
@@ -54,6 +73,49 @@ Common options:
 - `--seed` for repeatable results
 - `--device` `cpu` or `cuda`
 - `--model` model id (default `cvssp/audioldm2`)
+
+### Use example ZIP sound libraries (samplelib)
+
+This repo includes example sound-library ZIPs under:
+
+- `.examples/sound libraies/*.zip`
+
+Generate by selecting the “best matching” filename (or a random fallback) and applying a small random pitch variation:
+
+```powershell
+python -m soundgen.generate --engine samplelib --prompt "coin pickup" --seconds 1.5 --post --out outputs\samplelib_coin.wav
+```
+
+This also writes credits:
+- `outputs\samplelib_coin.wav.credits.json` (sidecar)
+- For Minecraft export: `assets/<namespace>/soundgen_credits.json` inside the pack
+
+More chaos: mix two samples together:
+
+```powershell
+python -m soundgen.generate --engine samplelib --library-mix-count 2 --prompt "coin pickup" --seconds 1.5 --out outputs\coin_mix.wav
+```
+
+Speed: the samplelib engine maintains a persistent index at `library/samplelib_index.json` by default.
+Set `--library-index ""` to disable.
+
+### DSP synth engine (synth)
+
+```powershell
+python -m soundgen.generate --engine synth --prompt "clicky ui blip" --seconds 0.7 --map-controls --post --out outputs\synth_blip.wav
+```
+
+You can force the waveform:
+
+```powershell
+python -m soundgen.generate --engine synth --synth-waveform square --prompt "retro laser" --seconds 1.2 --out outputs\laser.wav
+```
+
+You can also point at your own ZIP(s):
+
+```powershell
+python -m soundgen.generate --engine samplelib --library-zip "C:\path\to\MyLibrary.zip" --prompt "metal clank" --out outputs\clank.wav
+```
 
 ## Minecraft resource pack output (.ogg)
 
@@ -161,6 +223,29 @@ python -m soundgen.web
 ```
 
 Then open the local URL printed in the terminal.
+
+Web outputs:
+- Always writes a WAV under `outputs/` (e.g. `outputs/web_synth.wav`).
+- Writes per-sound credits next to the WAV as `*.wav.credits.json`.
+- If “Export to Minecraft” is enabled, it writes `.ogg` + updates `sounds.json` and also updates pack credits at `assets/<namespace>/soundgen_credits.json`.
+
+## Quick smoke checks
+
+These are fast commands to verify the main paths after changes:
+
+```powershell
+# Synth + prompt-to-controls + post chain + credits sidecar
+python -m soundgen.generate --engine synth --prompt "clicky ui blip" --seconds 0.7 --map-controls --post --out outputs\smoke_synth.wav
+
+# Sample library selection + mixing + credits sidecar (uses .examples/sound libraies/*.zip)
+python -m soundgen.generate --engine samplelib --library-mix-count 2 --prompt "coin pickup" --seconds 0.7 --out outputs\smoke_samplelib.wav
+
+# Minecraft export + pack credits
+python -m soundgen.generate --engine synth --minecraft --namespace mymod --event ui.blip --subtitle "UI Blip" --prompt "clicky ui blip" --seconds 0.7 --map-controls --post
+
+# Batch manifest export (writes pack + catalog + pack credits)
+python -m soundgen.batch --manifest example_manifest.json --zip outputs\resourcepack.zip
+```
 
 ## Troubleshooting
 
