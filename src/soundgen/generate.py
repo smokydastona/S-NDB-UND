@@ -264,6 +264,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional override seed used for source lock (transient/tail). If omitted, uses the base --seed.",
     )
 
+    p.add_argument(
+        "--layered-granular-preset",
+        choices=["off", "auto", "chitter", "rasp", "buzz", "screech"],
+        default="off",
+        help="Layered: add a procedural granular texture layer mixed into body (off/auto/chitter/rasp/buzz/screech).",
+    )
+    p.add_argument(
+        "--layered-granular-amount",
+        type=float,
+        default=0.0,
+        help="Layered: granular texture mix amount (0..1).",
+    )
+    p.add_argument(
+        "--layered-granular-grain-ms",
+        type=float,
+        default=28.0,
+        help="Layered: granular texture grain size (ms).",
+    )
+    p.add_argument(
+        "--layered-granular-spray",
+        type=float,
+        default=0.35,
+        help="Layered: granular texture randomness/density (0..1).",
+    )
+
     p.add_argument("--out", default="outputs/out.wav", help="Output WAV path.")
 
     # Export format options (non-Minecraft)
@@ -502,6 +527,10 @@ def main(argv: list[str] | None = None) -> int:
             layered_tail_tilt=float(args.layered_tail_tilt),
             layered_source_lock=bool(args.layered_source_lock),
             layered_source_seed=(int(source_seed) if source_seed is not None else None),
+            layered_granular_preset=str(args.layered_granular_preset),
+            layered_granular_amount=float(args.layered_granular_amount),
+            layered_granular_grain_ms=float(args.layered_granular_grain_ms),
+            layered_granular_spray=float(args.layered_granular_spray),
             layered_transient_ms=int(args.layered_transient_ms),
             layered_tail_ms=int(args.layered_tail_ms),
             layered_transient_attack_ms=float(args.layered_transient_attack_ms),

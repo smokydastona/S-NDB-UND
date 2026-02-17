@@ -35,6 +35,10 @@ def _generate(
     layered_source_lock: bool,
     layered_source_seed: float | None,
     layered_micro_variation: float,
+    layered_granular_preset: str,
+    layered_granular_amount: float,
+    layered_granular_grain_ms: float,
+    layered_granular_spray: float,
     layered_transient_sharpness: float,
     layered_tail_length_ms: int,
     layered_transient_tilt: float,
@@ -59,6 +63,7 @@ def _generate(
     ogg_quality: int,
 
     post: bool,
+    polish: bool,
 ) -> tuple[str, str, str, object, object]:
     def _infer_out_format() -> str:
         fmt = (out_format or "wav").strip().lower()
@@ -69,18 +74,29 @@ def _generate(
 
     def _pp_params() -> PostProcessParams:
         params = PostProcessParams()
-        if hints is None:
-            return params
-        # Apply only the hints we support for post-processing.
-        if hints.loudness_rms_db is not None:
-            params = replace(params, normalize_rms_db=float(hints.loudness_rms_db))
-        if hints.highpass_hz is not None:
-            params = replace(params, highpass_hz=float(hints.highpass_hz))
-        if hints.lowpass_hz is not None:
-            params = replace(params, lowpass_hz=float(hints.lowpass_hz))
+        if hints is not None:
+            # Apply only the hints we support for post-processing.
+            if hints.loudness_rms_db is not None:
+                params = replace(params, normalize_rms_db=float(hints.loudness_rms_db))
+            if hints.highpass_hz is not None:
+                params = replace(params, highpass_hz=float(hints.highpass_hz))
+            if hints.lowpass_hz is not None:
+                params = replace(params, lowpass_hz=float(hints.lowpass_hz))
+
+        if polish:
+            # Conservative defaults, mirrors CLI --polish.
+            params = replace(
+                params,
+                denoise_strength=0.25,
+                transient_amount=0.25,
+                compressor_threshold_db=-18.0,
+                compressor_ratio=4.0,
+                compressor_attack_ms=5.0,
+                compressor_release_ms=90.0,
+                compressor_makeup_db=3.0,
+                limiter_ceiling_db=-1.0,
+            )
         return params
-        post: bool,
-        polish: bool,
     def _qa_info(audio: np.ndarray, sr: int) -> str:
         m = compute_metrics(audio, sr)
         flags: list[str] = []
@@ -92,7 +108,7 @@ def _generate(
         return f"qa: {m.seconds:.2f}s @ {m.sample_rate}Hz peak={m.peak:.3f} rms={m.rms:.3f}{flag_s}".strip()
 
     def _maybe_postprocess_array(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
-        if not post:
+        if not (post or polish):
             return audio, _qa_info(audio, sr)
         processed, rep = post_process_audio(audio, sr, _pp_params())
         return processed, f"post: trimmed={rep.trimmed} {_qa_info(processed, sr)}".strip()
@@ -223,6 +239,10 @@ def _generate(
             layered_tail_tilt=float(layered_tail_tilt),
             layered_source_lock=bool(layered_source_lock),
             layered_source_seed=(int(source_seed_i) if source_seed_i is not None else None),
+            layered_granular_preset=str(layered_granular_preset),
+            layered_granular_amount=float(layered_granular_amount),
+            layered_granular_grain_ms=float(layered_granular_grain_ms),
+            layered_granular_spray=float(layered_granular_spray),
             layered_duck_amount=float(layered_duck),
             layered_transient_attack_ms=float(transient_attack_ms),
             layered_transient_hold_ms=10.0,
@@ -304,6 +324,35 @@ def main() -> None:
             layered_source_lock = gr.Checkbox(value=True, label="layered source lock")
             layered_source_seed = gr.Number(value=None, precision=0, label="layered source seed (optional)", visible=False)
             layered_micro_variation = gr.Slider(0.0, 1.0, value=0.25, step=0.05, label="layered micro-variation")
+            layered_granular_preset = gr.Dropdown(
+                ["off", "auto", "chitter", "rasp", "buzz", "screech"],
+                value="off",
+                label="layered granular preset",
+            )
+            layered_granular_amount = gr.Slider(
+                0.0,
+                1.0,
+                value=0.0,
+                step=0.05,
+                label="layered granular amount",
+                visible=False,
+            )
+            layered_granular_grain_ms = gr.Slider(
+                6.0,
+                120.0,
+                value=28.0,
+                step=1.0,
+                label="layered granular grain (ms)",
+                visible=False,
+            )
+            layered_granular_spray = gr.Slider(
+                0.0,
+                1.0,
+                value=0.35,
+                step=0.05,
+                label="layered granular spray",
+                visible=False,
+            )
             layered_transient_sharpness = gr.Slider(0.0, 1.0, value=0.7, step=0.05, label="layered transient sharpness")
             layered_tail_length_ms = gr.Slider(80, 1200, value=350, step=10, label="layered tail length (ms)")
 
@@ -311,6 +360,16 @@ def main() -> None:
             fn=lambda v: gr.update(visible=bool(v)),
             inputs=[layered_source_lock],
             outputs=[layered_source_seed],
+        )
+
+        layered_granular_preset.change(
+            fn=lambda v: (
+                gr.update(visible=str(v).strip().lower() != "off"),
+                gr.update(visible=str(v).strip().lower() != "off"),
+                gr.update(visible=str(v).strip().lower() != "off"),
+            ),
+            inputs=[layered_granular_preset],
+            outputs=[layered_granular_amount, layered_granular_grain_ms, layered_granular_spray],
         )
 
         with gr.Row():
@@ -377,6 +436,10 @@ def main() -> None:
                 layered_source_lock,
                 layered_source_seed,
                 layered_micro_variation,
+                layered_granular_preset,
+                layered_granular_amount,
+                layered_granular_grain_ms,
+                layered_granular_spray,
                 layered_transient_sharpness,
                 layered_tail_length_ms,
                 layered_transient_tilt,

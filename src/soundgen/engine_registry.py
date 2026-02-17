@@ -71,6 +71,10 @@ def generate_wav(
     layered_tail_tilt: float = 0.0,
     layered_source_lock: bool = False,
     layered_source_seed: int | None = None,
+    layered_granular_preset: str = "off",
+    layered_granular_amount: float = 0.0,
+    layered_granular_grain_ms: float = 28.0,
+    layered_granular_spray: float = 0.35,
     layered_transient_ms: int = 110,
     layered_tail_ms: int = 350,
     layered_transient_attack_ms: float = 1.0,
@@ -228,6 +232,11 @@ def generate_wav(
             tail_tilt=float(layered_tail_tilt),
             source_lock=bool(layered_source_lock),
             source_seed=(int(layered_source_seed) if layered_source_seed is not None else None),
+
+            granular_preset=str(layered_granular_preset),
+            granular_amount=float(layered_granular_amount),
+            granular_grain_ms=float(layered_granular_grain_ms),
+            granular_spray=float(layered_granular_spray),
 
             library_zips=tuple(Path(p) for p in library_zips),
             library_pitch_min=float(library_pitch_min),

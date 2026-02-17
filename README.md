@@ -163,6 +163,13 @@ Source lock (pin transient/tail samples across variants):
 python -m soundgen.generate --engine layered --minecraft --namespace mymod --event ui.hit --variants 3 --seed 123 --layered-family --layered-source-lock --layered-micro-variation 0.35 --prompt "melee hit"
 ```
 
+Granular texture (hybrid "diffusion + granular" feel, but DSP):
+
+```powershell
+# Add a crisp insect/rasp texture layer into the body
+python -m soundgen.generate --engine layered --prompt "insect chitter" --seconds 1.5 --layered-granular-preset chitter --layered-granular-amount 0.45 --layered-granular-spray 0.60 --post --out outputs\chitter.wav
+```
+
 How `family` + `source lock` + `micro-variation` interact (high-level):
 
 ```mermaid
@@ -208,6 +215,7 @@ Layered controls: CLI ↔ Gradio mapping (quick reference)
 | Envelopes (A/H/D) | `--layered-<layer>-attack-ms`, `--layered-<layer>-hold-ms`, `--layered-<layer>-decay-ms` for `transient/body/tail` | Not exposed (CLI-only) |
 | Envelope curve | `--layered-curve {linear,exponential}` | “layered curve” (dropdown) |
 | Spectral tilt | `--layered-transient-tilt`, `--layered-body-tilt`, `--layered-tail-tilt` | “layered transient/body/tail tilt” (sliders) |
+| Granular texture | `--layered-granular-preset`, `--layered-granular-amount`, `--layered-granular-grain-ms`, `--layered-granular-spray` | “layered granular preset/amount/grain/spray” (dropdown + sliders) |
 | Polish mode | `--polish` | “Polish mode (denoise/transients/compress/limit)” (checkbox) |
 
 ## Minecraft resource pack output (.ogg)

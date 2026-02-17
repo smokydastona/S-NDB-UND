@@ -206,6 +206,145 @@ def _seed_offset(seed: int | None, offset: int) -> int:
     return int((base * 1000003 + offset) & 0x7FFFFFFF)
 
 
+def _hann(n: int) -> np.ndarray:
+    n = int(n)
+    if n <= 1:
+        return np.ones(max(0, n), dtype=np.float32)
+    t = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    return (0.5 - 0.5 * np.cos(2.0 * np.pi * t)).astype(np.float32, copy=False)
+
+
+def _approx_bandpass_one_pole(
+    x: np.ndarray,
+    *,
+    sr: int,
+    low_hz: float,
+    high_hz: float,
+) -> np.ndarray:
+    """Cheap bandpass: LP(high) - LP(low). Good enough for texture/noise grains."""
+
+    lo = float(max(20.0, min(float(low_hz), 0.45 * float(sr))))
+    hi = float(max(lo + 20.0, min(float(high_hz), 0.45 * float(sr))))
+    lp_hi = _one_pole_lowpass(x.astype(np.float32, copy=False), sr=sr, cutoff_hz=hi)
+    lp_lo = _one_pole_lowpass(x.astype(np.float32, copy=False), sr=sr, cutoff_hz=lo)
+    return (lp_hi - lp_lo).astype(np.float32, copy=False)
+
+
+def _auto_granular_preset(prompt: str, layered_preset: str) -> str:
+    p = (prompt or "").lower()
+    lp = (layered_preset or "").lower()
+    if any(k in p for k in ("insect", "bug", "chitter", "skitter", "chitin")):
+        return "chitter"
+    if any(k in p for k in ("buzz", "wasp", "mosquito", "bee")):
+        return "buzz"
+    if any(k in p for k in ("screech", "shriek", "scream")):
+        return "screech"
+    if lp == "creature" or any(k in p for k in ("growl", "roar", "snarl", "rasp")):
+        return "rasp"
+    return "off"
+
+
+def _granular_preset_defaults(preset: str) -> dict[str, float]:
+    pr = (preset or "off").strip().lower()
+    if pr == "chitter":
+        return {"low_hz": 2500.0, "high_hz": 9000.0, "density": 65.0, "grain_ms": 18.0}
+    if pr == "buzz":
+        return {"low_hz": 800.0, "high_hz": 2400.0, "density": 120.0, "grain_ms": 10.0}
+    if pr == "screech":
+        return {"low_hz": 1200.0, "high_hz": 9000.0, "density": 18.0, "grain_ms": 65.0}
+    if pr == "rasp":
+        return {"low_hz": 300.0, "high_hz": 3200.0, "density": 35.0, "grain_ms": 35.0}
+    return {"low_hz": 800.0, "high_hz": 5000.0, "density": 0.0, "grain_ms": 25.0}
+
+
+def _synthesize_granular_texture(
+    *,
+    seconds: float,
+    sr: int,
+    seed: int,
+    preset: str,
+    grain_ms: float,
+    spray: float,
+) -> np.ndarray:
+    """Generate a deterministic noise-grain texture for crisp creature/insect layers.
+
+    Returns mono float32 in [-1,1].
+    """
+
+    sr = int(sr)
+    n = max(1, int(round(float(seconds) * sr)))
+
+    pr = (preset or "off").strip().lower()
+    if pr == "off":
+        return np.zeros(n, dtype=np.float32)
+
+    defaults = _granular_preset_defaults(pr)
+    base_density = float(defaults["density"])
+    if base_density <= 0.0:
+        return np.zeros(n, dtype=np.float32)
+
+    sp = float(np.clip(float(spray), 0.0, 1.0))
+    gms = float(grain_ms) if float(grain_ms) > 0.0 else float(defaults["grain_ms"])
+    g_n = int(np.clip(_ms_to_n(gms, sr), 16, int(0.20 * sr)))
+
+    # Density scales with spray: tighter at low spray, busier at high spray.
+    density = base_density * (0.65 + 0.90 * sp)
+    expected_grains = max(1, int(round(float(seconds) * density)))
+
+    rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
+    y = np.zeros(n, dtype=np.float32)
+    window = _hann(g_n)
+
+    # Low spray => quasi-periodic; high spray => random cloud.
+    step = max(1, int(round(float(sr) / max(1e-6, density))))
+
+    low_hz = float(defaults["low_hz"])
+    high_hz = float(defaults["high_hz"])
+
+    for i in range(expected_grains):
+        if sp < 0.20:
+            jitter = int(round((rng.random() * 2.0 - 1.0) * sp * float(step)))
+            start = int(i * step + jitter)
+        else:
+            start = int(rng.integers(0, n))
+
+        if start >= n:
+            continue
+
+        # Grain length jitter, more at higher spray.
+        gl = int(np.clip(round(g_n * (1.0 + (rng.random() * 2.0 - 1.0) * 0.35 * sp)), 16, int(0.20 * sr)))
+        if gl != g_n:
+            w = _hann(gl)
+        else:
+            w = window
+
+        # Noise grain
+        grain = rng.standard_normal(gl).astype(np.float32, copy=False)
+
+        # Bandpass for character; broaden with spray.
+        lo = low_hz * (0.85 + 0.40 * rng.random())
+        hi = high_hz * (0.85 + 0.40 * rng.random())
+        # With high spray, widen range slightly
+        lo *= (1.0 - 0.20 * sp)
+        hi *= (1.0 + 0.15 * sp)
+        band = _approx_bandpass_one_pole(grain, sr=sr, low_hz=lo, high_hz=hi)
+
+        # Slight asymmetry adds raspiness when clipped.
+        band = _soft_clip(band, drive=0.25 + 0.35 * sp)
+
+        g = (band * w).astype(np.float32, copy=False)
+
+        end = min(n, start + g.size)
+        if end <= start:
+            continue
+        y[start:end] += g[: end - start]
+
+    # Keep texture controlled; it will be scaled by granular_amount later.
+    y = _soft_clip(y, drive=0.25)
+    y = _normalize_peak(y, peak=0.65)
+    return np.clip(y, -1.0, 1.0).astype(np.float32, copy=False)
+
+
 @dataclass(frozen=True)
 class LayeredParams:
     prompt: str
@@ -272,6 +411,12 @@ class LayeredParams:
     # body seed / variant index changes.
     source_lock: bool = False
     source_seed: Optional[int] = None
+
+    # Granular texture (procedural) mixed into body for crispness / insect / rasp
+    granular_preset: str = "off"  # off|auto|chitter|rasp|buzz|screech
+    granular_amount: float = 0.0  # 0..1
+    granular_grain_ms: float = 28.0
+    granular_spray: float = 0.35  # 0..1
 
     # synth body
     synth_waveform: str = "sine"
@@ -437,6 +582,7 @@ def _apply_micro_variation(p: LayeredParams, rng: random.Random) -> LayeredParam
     gain_rel = 0.06 * mv
     time_rel = 0.12 * mv
     tilt_rel = 0.25 * mv
+    gran_rel = 0.25 * mv
 
     transient_ms = int(np.clip(round(_jitter(rng, base=float(p.transient_ms), rel=time_rel)), 40, 220))
     tail_ms = int(np.clip(round(_jitter(rng, base=float(p.tail_ms), rel=time_rel * 1.5)), 80, 2000))
@@ -455,6 +601,9 @@ def _apply_micro_variation(p: LayeredParams, rng: random.Random) -> LayeredParam
         transient_tilt=float(np.clip(_jitter(rng, base=float(p.transient_tilt), rel=tilt_rel), -1.0, 1.0)),
         body_tilt=float(np.clip(_jitter(rng, base=float(p.body_tilt), rel=tilt_rel), -1.0, 1.0)),
         tail_tilt=float(np.clip(_jitter(rng, base=float(p.tail_tilt), rel=tilt_rel), -1.0, 1.0)),
+        granular_amount=float(np.clip(_jitter(rng, base=float(p.granular_amount), rel=0.40 * mv), 0.0, 1.0)),
+        granular_grain_ms=float(np.clip(_jitter(rng, base=float(p.granular_grain_ms), rel=gran_rel), 6.0, 120.0)),
+        granular_spray=float(np.clip(_jitter(rng, base=float(p.granular_spray), rel=0.25 * mv), 0.0, 1.0)),
     )
 
 
@@ -641,6 +790,25 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
     )
     body = (body * benv).astype(np.float32, copy=False)
 
+    # Optional granular texture mixed into body (procedural, deterministic).
+    gran_amount = float(np.clip(float(params.granular_amount), 0.0, 1.0))
+    gran_preset = (params.granular_preset or "off").strip().lower()
+    if gran_preset == "auto":
+        gran_preset = _auto_granular_preset(prompt, str(params.preset))
+    if gran_amount > 1e-4 and gran_preset != "off":
+        gran_seed = _seed_offset(params.seed, 7000 + int(params.variant_index) * 37)
+        texture = _synthesize_granular_texture(
+            seconds=float(params.seconds),
+            sr=sr,
+            seed=gran_seed,
+            preset=gran_preset,
+            grain_ms=float(params.granular_grain_ms),
+            spray=float(params.granular_spray),
+        )
+        texture = texture[: body.size]
+        texture = (texture * benv[: texture.size]).astype(np.float32, copy=False)
+        body = (body + gran_amount * texture).astype(np.float32, copy=False)
+
     # Tilt body character
     body = _apply_spectral_tilt(body, sr=sr, tilt=float(params.body_tilt), cutoff_hz=1600.0)
 
@@ -668,6 +836,12 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
             "micro_variation": float(params.micro_variation),
             "source_lock": bool(params.source_lock),
             "source_seed": (int(source_seed_base) if source_seed_base is not None else None),
+            "granular": {
+                "preset": str(gran_preset),
+                "amount": float(gran_amount),
+                "grain_ms": float(params.granular_grain_ms),
+                "spray": float(params.granular_spray),
+            },
             "transient_ms": int(params.transient_ms),
             "tail_ms": int(params.tail_ms),
             "gains": {
