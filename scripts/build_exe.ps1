@@ -24,10 +24,12 @@ python -m pip install -r requirements.txt | Out-Null
 # Note: AI engines (torch/diffusers/transformers) make these builds large.
 $genName = "soundgen-generate"
 $webName = "soundgen-web"
+$desktopName = "soundgen-desktop"
 if ($Version -and $Version.Trim().Length -gt 0) {
   $ver = $Version.Trim()
   $genName = "$genName-$ver"
   $webName = "$webName-$ver"
+  $desktopName = "$desktopName-$ver"
 }
 
 $commonArgs = @(
@@ -75,4 +77,21 @@ $webArgs += @(
 
 & pyinstaller @webArgs
 
-Write-Host "Built executables into $OutDir\\$genName and $OutDir\\$webName"
+$desktopArgs = @()
+$desktopArgs += $commonArgs
+$desktopArgs += @("--noconsole")
+$desktopArgs += @("--name", $desktopName)
+$desktopArgs += @(
+  "--collect-all", "gradio",
+  "--collect-all", "webview"
+)
+$desktopArgs += $commonCollect
+$desktopArgs += @(
+  "-m", "soundgen.desktop",
+  "--distpath", $OutDir,
+  "--workpath", $WorkDir
+)
+
+& pyinstaller @desktopArgs
+
+Write-Host "Built executables into $OutDir\\$genName, $OutDir\\$webName, and $OutDir\\$desktopName"

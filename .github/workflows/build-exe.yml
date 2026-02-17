@@ -43,6 +43,7 @@ jobs:
           $ver = $env:GITHUB_RUN_NUMBER
           Compress-Archive -Path "dist/soundgen-generate-$ver" -DestinationPath "dist/soundgen-generate-$ver-windows.zip" -Force
           Compress-Archive -Path "dist/soundgen-web-$ver" -DestinationPath "dist/soundgen-web-$ver-windows.zip" -Force
+          Compress-Archive -Path "dist/soundgen-desktop-$ver" -DestinationPath "dist/soundgen-desktop-$ver-windows.zip" -Force
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -51,6 +52,7 @@ jobs:
           path: |
             dist/soundgen-generate-${{ github.run_number }}-windows.zip
             dist/soundgen-web-${{ github.run_number }}-windows.zip
+            dist/soundgen-desktop-${{ github.run_number }}-windows.zip
 
       - name: Upload release assets
         if: github.event_name == 'release'
@@ -59,3 +61,4 @@ jobs:
           files: |
             dist/soundgen-generate-${{ github.run_number }}-windows.zip
             dist/soundgen-web-${{ github.run_number }}-windows.zip
+            dist/soundgen-desktop-${{ github.run_number }}-windows.zip

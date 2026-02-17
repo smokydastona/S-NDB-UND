@@ -698,7 +698,7 @@ def _generate(
     return last_download, playsound, info, wav_img, spec_img
 
 
-def main() -> None:
+def build_demo() -> gr.Blocks:
     with gr.Blocks(title="Sound Generator") as demo:
         gr.Markdown("# Prompt → Sound Effect")
         with gr.Accordion("Engine & preset", open=True):
@@ -1040,6 +1040,11 @@ def main() -> None:
             outputs=[out_file, playsound_cmd, info, wave, spec],
         )
 
+    return demo
+
+
+def main() -> None:
+    demo = build_demo()
     demo.launch()
 
 

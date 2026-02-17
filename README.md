@@ -63,7 +63,8 @@ This repo can build Windows executables via GitHub Actions.
 - The workflow is in `.github/workflows/build-exe.yml`.
 - Builds produce two zipped folders (versioned per workflow run):
 	- `soundgen-generate-<run>-windows.zip` (CLI generator)
-	- `soundgen-web-<run>-windows.zip` (Gradio UI)
+	- `soundgen-web-<run>-windows.zip` (Gradio UI in your browser)
+	- `soundgen-desktop-<run>-windows.zip` (Desktop app window; embedded UI)
 
 How to get them:
 
