@@ -30,31 +30,51 @@ if ($Version -and $Version.Trim().Length -gt 0) {
   $webName = "$webName-$ver"
 }
 
-pyinstaller --noconfirm --clean --onedir --name $genName \
-  --collect-all soundgen \
-  --collect-all numpy \
-  --collect-all scipy \
-  --collect-all soundfile \
-  --collect-all torch \
-  --collect-all diffusers \
-  --collect-all transformers \
-  --collect-all accelerate \
-  --collect-all safetensors \
-  -m soundgen.generate \
-  --distpath $OutDir --workpath $WorkDir
+$commonArgs = @(
+  "--noconfirm",
+  "--clean",
+  "--onedir"
+)
 
-pyinstaller --noconfirm --clean --onedir --name $webName \
-  --collect-all soundgen \
-  --collect-all gradio \
-  --collect-all numpy \
-  --collect-all scipy \
-  --collect-all soundfile \
-  --collect-all torch \
-  --collect-all diffusers \
-  --collect-all transformers \
-  --collect-all accelerate \
-  --collect-all safetensors \
-  -m soundgen.web \
-  --distpath $OutDir --workpath $WorkDir
+$commonCollect = @(
+  "--collect-all", "soundgen",
+  "--collect-all", "numpy",
+  "--collect-all", "scipy",
+  "--collect-all", "soundfile",
+  "--collect-all", "torch",
+  "--collect-all", "diffusers",
+  "--collect-all", "transformers",
+  "--collect-all", "accelerate",
+  "--collect-all", "safetensors"
+)
+
+$genArgs = @(
+  $commonArgs +
+  @("--name", $genName) +
+  $commonCollect +
+  @(
+    "-m", "soundgen.generate",
+    "--distpath", $OutDir,
+    "--workpath", $WorkDir
+  )
+)
+
+& pyinstaller @genArgs
+
+$webArgs = @(
+  $commonArgs +
+  @("--name", $webName) +
+  @(
+    "--collect-all", "gradio"
+  ) +
+  $commonCollect +
+  @(
+    "-m", "soundgen.web",
+    "--distpath", $OutDir,
+    "--workpath", $WorkDir
+  )
+)
+
+& pyinstaller @webArgs
 
 Write-Host "Built executables into $OutDir\\$genName and $OutDir\\$webName"
