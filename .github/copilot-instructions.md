@@ -39,20 +39,34 @@
   - (Optionally) Gradio controls in `soundgen.web`
 - Local/generated folders are intentionally gitignored: `outputs/`, `resourcepack/`, `pre_gen_sound/`, `tools/rfxgen/`, `library/`, `*.egg-info/`.
 
-## Workflow after every change (recommended)
-Use the same discipline as “mod workspace” repos: scan broadly, fix systematically, and validate via a minimal smoke run.
+## Workflow after every change (required)
 
-1. **Scan first**
-   - Check VS Code Problems across the workspace.
-   - If you touched CLI flags, update `README.md` usage examples and any help text.
+After implementing any requested change, ALWAYS run a full workspace scan/validation, then commit and push.
+
+### Full workspace scan (do this every time)
+- Check VS Code Problems across the workspace.
+- Run a fast syntax/import validation: `python -m compileall -q src/soundgen`.
+- If you touched CLI flags or behavior, ensure `README.md` examples/help text are updated.
+
+### Fix + validate loop
+1. **Scan first** (full scan above)
 2. **Fix errors systematically**
-   - Don’t stop after fixing one file; iterate until the workspace is clean for the area you changed.
+  - Don’t stop after fixing one file; iterate until the workspace is clean for the area you changed.
 3. **Re-validate after each fix**
-   - Re-run the relevant smoke checks (below). If behavior changed, refresh docs immediately.
+  - Re-run the relevant smoke checks (below). If behavior changed, refresh docs immediately.
 4. **Keep outputs out of git**
-   - Do not commit generated audio, packs, or local catalogs. Extend `.gitignore` instead.
-5. **Explain changes**
-   - State what was wrong, what changed, and what to run to verify.
+  - Do not commit generated audio, packs, or local catalogs. Extend `.gitignore` instead.
+
+### Commit + push (do this after changes)
+- Stage only real source/config/doc changes (never generated audio/outputs).
+- Commit with a short, descriptive message (prefer `feat:`, `fix:`, `docs:`, `chore:`).
+- Push to the current branch.
+
+### User intent: “push”
+- When the user says **“push”**, interpret it as: **run the full workspace scan → stage → commit → push**.
+
+### Explain changes
+- State what was wrong, what changed, and what to run to verify.
 
 ### “Scan likely impact radius” definition
 After the workspace-wide scan, proactively review the connected modules/configs that must remain consistent so we don’t ship a change that breaks generation/export.

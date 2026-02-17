@@ -48,31 +48,29 @@ $commonCollect = @(
   "--collect-all", "safetensors"
 )
 
-$genArgs = @(
-  $commonArgs +
-  @("--name", $genName) +
-  $commonCollect +
-  @(
-    "-m", "soundgen.generate",
-    "--distpath", $OutDir,
-    "--workpath", $WorkDir
-  )
+$genArgs = @()
+$genArgs += $commonArgs
+$genArgs += @("--name", $genName)
+$genArgs += $commonCollect
+$genArgs += @(
+  "-m", "soundgen.generate",
+  "--distpath", $OutDir,
+  "--workpath", $WorkDir
 )
 
 & pyinstaller @genArgs
 
-$webArgs = @(
-  $commonArgs +
-  @("--name", $webName) +
-  @(
-    "--collect-all", "gradio"
-  ) +
-  $commonCollect +
-  @(
-    "-m", "soundgen.web",
-    "--distpath", $OutDir,
-    "--workpath", $WorkDir
-  )
+$webArgs = @()
+$webArgs += $commonArgs
+$webArgs += @("--name", $webName)
+$webArgs += @(
+  "--collect-all", "gradio"
+)
+$webArgs += $commonCollect
+$webArgs += @(
+  "-m", "soundgen.web",
+  "--distpath", $OutDir,
+  "--workpath", $WorkDir
 )
 
 & pyinstaller @webArgs
