@@ -88,6 +88,20 @@ This repo includes a small, curated demo pack under [soundpack_v1/README.md](sou
 
 - Pro Mode spec (controls, ranges, precedence): [docs/pro_mode_spec.md](docs/pro_mode_spec.md)
 - Creature preset ↔ polish profile matrix: [docs/creature_preset_polish_matrix.md](docs/creature_preset_polish_matrix.md)
+- Creature vocalization prompt templates: [docs/creature_prompt_templates.md](docs/creature_prompt_templates.md)
+
+## Benchmark (QA proxy metrics)
+
+Run a small benchmark suite that compares engines using simple QA proxy metrics (peak/RMS/clipping/long-tail) and runtime.
+Outputs are written under `outputs/bench/<timestamp>/`.
+
+```powershell
+# Mixed default suite
+python -m soundgen.benchmark --suite default --engines rfxgen layered diffusers --repeats 4 --candidates 2 --post
+
+# Creature vocalization suite
+python -m soundgen.benchmark --suite creature --engines layered stable_audio_open --repeats 3 --candidates 3 --polish
+```
 
 ## Generate from the CLI
 

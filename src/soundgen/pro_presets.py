@@ -433,7 +433,7 @@ def apply_pro_preset(
     engine = str(getattr(args, "engine", "")).strip().lower()
 
     # Apply prompt augmentation for AI/sample selection engines.
-    if preset.prompt_suffix and engine in {"diffusers", "replicate", "samplelib", "layered"}:
+    if preset.prompt_suffix and engine in {"diffusers", "stable_audio_open", "replicate", "samplelib", "layered"}:
         base_prompt = str(getattr(args, "prompt"))
         suffix = str(preset.prompt_suffix).strip()
         if suffix and suffix.lower() not in base_prompt.lower():
