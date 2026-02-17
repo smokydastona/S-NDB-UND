@@ -75,6 +75,14 @@ python -m soundgen.generate --engine layered --layered-preset creature --prompt 
 python -m soundgen.generate --engine synth --prompt "ui click" --seconds 0.35 --seed 7 --post --emotion calm --intensity 0.35 --multiband --reverb room --reverb-mix 0.08 --reverb-time 0.7 --out outputs\ui_click.wav
 ```
 
+**Diffusers multi-band (model-side, slower)**
+
+This runs 2-3 diffusers generations (auto) and recombines low/mid/high bands for cleaner output.
+
+```powershell
+python -m soundgen.generate --engine diffusers --diffusers-multiband --diffusers-mb-mode auto --diffusers-mb-low-hz 250 --diffusers-mb-high-hz 3000 --prompt "monster roar" --seconds 2.5 --seed 123 --post --out outputs\roar_multiband.wav
+```
+
 ### Export format options (non-Minecraft)
 
 By default, `--out` writes a 16-bit PCM WAV. You can change WAV encoding or export other formats:

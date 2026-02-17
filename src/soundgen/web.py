@@ -24,6 +24,10 @@ def _generate(
     seed: int | None,
     device: str,
     model: str,
+    diffusers_multiband: bool,
+    diffusers_mb_mode: str,
+    diffusers_mb_low_hz: float,
+    diffusers_mb_high_hz: float,
     preset: str,
     rfxgen_path: str,
     library_mix_count: int,
@@ -331,6 +335,10 @@ def _generate(
             out_wav=wav_path,
             device=device,
             model=model,
+            diffusers_multiband=bool(diffusers_multiband),
+            diffusers_multiband_mode=str(diffusers_mb_mode or "auto"),
+            diffusers_multiband_low_hz=float(diffusers_mb_low_hz),
+            diffusers_multiband_high_hz=float(diffusers_mb_high_hz),
             preset=(preset or None),
             rfxgen_path=(Path(rfxgen_path) if rfxgen_path else None),
             library_zips=default_zips,
@@ -432,6 +440,13 @@ def main() -> None:
                 value="cvssp/audioldm2",
                 label="Model",
             )
+
+        with gr.Accordion("Diffusers multi-band (model-side)", open=False):
+            diffusers_multiband = gr.Checkbox(value=False, label="Enable multi-band diffusers (slower, cleaner bands)")
+            diffusers_mb_mode = gr.Dropdown(["auto", "2band", "3band"], value="auto", label="Bands")
+            with gr.Row():
+                diffusers_mb_low_hz = gr.Slider(80.0, 800.0, value=250.0, step=10.0, label="Low crossover (Hz)")
+                diffusers_mb_high_hz = gr.Slider(800.0, 8000.0, value=3000.0, step=50.0, label="High crossover (Hz)")
         with gr.Row():
             preset = gr.Dropdown(list(SUPPORTED_PRESETS), value="blip", label="rfxgen preset")
             rfxgen_path = gr.Textbox(value="", label="rfxgen path (optional)", placeholder="e.g. tools/rfxgen/rfxgen.exe")
@@ -608,6 +623,10 @@ def main() -> None:
                 seed,
                 device,
                 model,
+                diffusers_multiband,
+                diffusers_mb_mode,
+                diffusers_mb_low_hz,
+                diffusers_mb_high_hz,
                 preset,
                 rfxgen_path,
                 library_mix_count,

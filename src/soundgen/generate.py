@@ -33,6 +33,31 @@ def build_parser() -> argparse.ArgumentParser:
         default="cvssp/audioldm2",
         help="Diffusers pretrained model id (e.g. cvssp/audioldm2).",
     )
+
+    # Diffusers multi-band mode (runs multiple generations and recombines bands).
+    p.add_argument(
+        "--diffusers-multiband",
+        action="store_true",
+        help="For engine=diffusers: run a multi-band strategy (2-3 model runs) and recombine for cleaner lows/mids/highs. Slower.",
+    )
+    p.add_argument(
+        "--diffusers-mb-mode",
+        choices=["auto", "2band", "3band"],
+        default="auto",
+        help="For engine=diffusers: multi-band mode. 'auto' uses 2band for short sounds and 3band for longer.",
+    )
+    p.add_argument(
+        "--diffusers-mb-low-hz",
+        type=float,
+        default=250.0,
+        help="For engine=diffusers multi-band: low crossover Hz (default 250).",
+    )
+    p.add_argument(
+        "--diffusers-mb-high-hz",
+        type=float,
+        default=3000.0,
+        help="For engine=diffusers multi-band: high crossover Hz (default 3000).",
+    )
     p.add_argument(
         "--preset",
         default=None,
@@ -684,6 +709,10 @@ def main(argv: list[str] | None = None) -> int:
             ),
             device=str(args.device),
             model=str(args.model),
+            diffusers_multiband=bool(args.diffusers_multiband),
+            diffusers_multiband_mode=str(args.diffusers_mb_mode or "auto"),
+            diffusers_multiband_low_hz=float(args.diffusers_mb_low_hz),
+            diffusers_multiband_high_hz=float(args.diffusers_mb_high_hz),
             preset=args.preset,
             rfxgen_path=(Path(args.rfxgen_path) if args.rfxgen_path else None),
             replicate_model=args.replicate_model,

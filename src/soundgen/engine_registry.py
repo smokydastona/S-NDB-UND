@@ -34,6 +34,10 @@ def generate_wav(
     # diffusers
     device: str | None = None,
     model: str | None = None,
+    diffusers_multiband: bool = False,
+    diffusers_multiband_mode: str = "auto",  # auto|2band|3band
+    diffusers_multiband_low_hz: float = 250.0,
+    diffusers_multiband_high_hz: float = 3000.0,
     # rfxgen
     preset: str | None = None,
     rfxgen_path: Path | None = None,
@@ -112,12 +116,24 @@ def generate_wav(
             seed=seed,
             device=str(device or "cpu"),
             model=str(model or "cvssp/audioldm2"),
+            multiband=bool(diffusers_multiband),
+            multiband_mode=str(diffusers_multiband_mode or "auto"),
+            multiband_low_hz=float(diffusers_multiband_low_hz),
+            multiband_high_hz=float(diffusers_multiband_high_hz),
         )
         audio, sr = generate_audio(gp)
         if postprocess_fn is not None:
             audio, post_info = postprocess_fn(audio, sr)
         write_wav(out_wav, audio, sr)
-        credits_extra = {"model": gp.model, "device": gp.device, "seed": seed}
+        credits_extra = {
+            "model": gp.model,
+            "device": gp.device,
+            "seed": seed,
+            "diffusers_multiband": bool(gp.multiband),
+            "diffusers_multiband_mode": (str(gp.multiband_mode) if bool(gp.multiband) else None),
+            "diffusers_multiband_low_hz": (float(gp.multiband_low_hz) if bool(gp.multiband) else None),
+            "diffusers_multiband_high_hz": (float(gp.multiband_high_hz) if bool(gp.multiband) else None),
+        }
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     if engine == "rfxgen":

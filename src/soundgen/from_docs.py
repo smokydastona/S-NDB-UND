@@ -110,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--model", default="cvssp/audioldm2")
 
+    # Diffusers multi-band mode (model-side; slower)
+    p.add_argument("--diffusers-multiband", action="store_true")
+    p.add_argument("--diffusers-mb-mode", choices=["auto", "2band", "3band"], default="auto")
+    p.add_argument("--diffusers-mb-low-hz", type=float, default=250.0)
+    p.add_argument("--diffusers-mb-high-hz", type=float, default=3000.0)
+
     # Catalog
     p.add_argument("--catalog", default="library/catalog.jsonl")
 
@@ -160,6 +166,11 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         model=args.model,
         rfxgen_path=args.rfxgen_path,
+        # Diffusers multi-band (if engine=diffusers)
+        diffusers_multiband=bool(getattr(args, "diffusers_multiband", False)),
+        diffusers_mb_mode=str(getattr(args, "diffusers_mb_mode", "auto")),
+        diffusers_mb_low_hz=float(getattr(args, "diffusers_mb_low_hz", 250.0)),
+        diffusers_mb_high_hz=float(getattr(args, "diffusers_mb_high_hz", 3000.0)),
         # Pro controls
         polish=bool(args.polish),
         emotion=str(args.emotion),

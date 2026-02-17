@@ -118,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default="cvssp/audioldm2", help="Diffusers model id")
     p.add_argument("--rfxgen-path", default=None, help="Optional path to rfxgen.exe")
 
+    # Diffusers multi-band mode (model-side; slower)
+    p.add_argument("--diffusers-multiband", action="store_true")
+    p.add_argument("--diffusers-mb-mode", choices=["auto", "2band", "3band"], default="auto")
+    p.add_argument("--diffusers-mb-low-hz", type=float, default=250.0)
+    p.add_argument("--diffusers-mb-high-hz", type=float, default=3000.0)
+
     # Post + pro controls (applies to all items where manifest sets post=true)
     p.add_argument("--polish", action="store_true", help="Enable conservative denoise/transient/compress/limit defaults")
     p.add_argument("--emotion", choices=["neutral", "aggressive", "calm", "scared"], default="neutral")
@@ -219,6 +225,10 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace) -> list[Path]:
                 postprocess_fn=(_pp if item.post else None),
                 device=str(args.device),
                 model=str(args.model),
+                diffusers_multiband=bool(getattr(args, "diffusers_multiband", False)),
+                diffusers_multiband_mode=str(getattr(args, "diffusers_mb_mode", "auto")),
+                diffusers_multiband_low_hz=float(getattr(args, "diffusers_mb_low_hz", 250.0)),
+                diffusers_multiband_high_hz=float(getattr(args, "diffusers_mb_high_hz", 3000.0)),
                 preset=item.preset,
                 layered_preset=(item.preset or "auto"),
                 rfxgen_path=(Path(args.rfxgen_path) if args.rfxgen_path else None),
