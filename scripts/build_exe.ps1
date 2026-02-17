@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 if ($Clean) {
   if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
   if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
-  if (Test-Path "soundgen.spec") { Remove-Item -Force "soundgen.spec" }
+  Get-ChildItem -Path . -Filter "*.spec" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
 # Install build-time tooling only (kept out of requirements.txt)
@@ -22,14 +22,10 @@ python -m pip install -r requirements.txt | Out-Null
 
 # Build two executables (folder-based /onedir for reliability)
 # Note: AI engines (torch/diffusers/transformers) make these builds large.
-$genName = "soundgen-generate"
-$webName = "soundgen-web"
-$desktopName = "soundgen-desktop"
+$appName = "soundgen"
 if ($Version -and $Version.Trim().Length -gt 0) {
   $ver = $Version.Trim()
-  $genName = "$genName-$ver"
-  $webName = "$webName-$ver"
-  $desktopName = "$desktopName-$ver"
+  $appName = "$appName-$ver"
 }
 
 $commonArgs = @(
@@ -43,6 +39,8 @@ $commonCollect = @(
   "--collect-all", "numpy",
   "--collect-all", "scipy",
   "--collect-all", "soundfile",
+  "--collect-all", "gradio",
+  "--collect-all", "webview",
   "--collect-all", "torch",
   "--collect-all", "diffusers",
   "--collect-all", "transformers",
@@ -61,48 +59,16 @@ function Invoke-PyInstaller {
   }
 }
 
-$genArgs = @()
-$genArgs += $commonArgs
-$genArgs += @("--name", $genName)
-$genArgs += $commonCollect
-$genArgs += @(
+$appArgs = @()
+$appArgs += $commonArgs
+$appArgs += @("--name", $appName)
+$appArgs += $commonCollect
+$appArgs += @(
   "--distpath", $OutDir,
   "--workpath", $WorkDir,
-  "src/soundgen/generate.py"
+  "src/soundgen/app.py"
 )
 
-Invoke-PyInstaller -Args $genArgs
+Invoke-PyInstaller -Args $appArgs
 
-$webArgs = @()
-$webArgs += $commonArgs
-$webArgs += @("--name", $webName)
-$webArgs += @(
-  "--collect-all", "gradio"
-)
-$webArgs += $commonCollect
-$webArgs += @(
-  "--distpath", $OutDir,
-  "--workpath", $WorkDir,
-  "src/soundgen/web.py"
-)
-
-Invoke-PyInstaller -Args $webArgs
-
-$desktopArgs = @()
-$desktopArgs += $commonArgs
-$desktopArgs += @("--noconsole")
-$desktopArgs += @("--name", $desktopName)
-$desktopArgs += @(
-  "--collect-all", "gradio",
-  "--collect-all", "webview"
-)
-$desktopArgs += $commonCollect
-$desktopArgs += @(
-  "--distpath", $OutDir,
-  "--workpath", $WorkDir,
-  "src/soundgen/desktop.py"
-)
-
-Invoke-PyInstaller -Args $desktopArgs
-
-Write-Host "Built executables into $OutDir\\$genName, $OutDir\\$webName, and $OutDir\\$desktopName"
+Write-Host "Built executable into $OutDir\\$appName"

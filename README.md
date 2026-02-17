@@ -61,10 +61,14 @@ python -m soundgen.doctor --check-stable-audio
 This repo can build Windows executables via GitHub Actions.
 
 - The workflow is in `.github/workflows/build-exe.yml`.
-- Builds produce two zipped folders (versioned per workflow run):
-	- `soundgen-generate-<run>-windows.zip` (CLI generator)
-	- `soundgen-web-<run>-windows.zip` (Gradio UI in your browser)
-	- `soundgen-desktop-<run>-windows.zip` (Desktop app window; embedded UI)
+- Builds produce one zipped folder (versioned per workflow run):
+	- `soundgen-<run>-windows.zip` (single app: CLI + Desktop UI)
+
+Usage:
+
+- Double-click `soundgen.exe` to open the desktop UI window.
+- Run in a terminal for CLI generation:
+	- `soundgen.exe generate --engine rfxgen --prompt "coin pickup" --post --out outputs\\test.wav`
 
 How to get them:
 
