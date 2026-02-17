@@ -158,7 +158,30 @@ def extract_sound_prompts(text: str) -> list[dict[str, str]]:
                     v = v[1:-1].strip()
                 if not v:
                     continue
-                if k in {"engine", "seconds", "variants", "sound_path", "seed", "preset", "weight", "volume", "pitch"}:
+                # Allow a compact, human-editable manifest summary line in docs.
+                # Keep this list explicit to avoid accidentally treating arbitrary text as config.
+                if k == "hf_token":
+                    k = "stable_audio_hf_token"
+
+                allowed = {
+                    "engine",
+                    "seconds",
+                    "variants",
+                    "sound_path",
+                    "seed",
+                    "preset",
+                    "weight",
+                    "volume",
+                    "pitch",
+                    # Stable Audio Open controls
+                    "stable_audio_model",
+                    "stable_audio_negative_prompt",
+                    "stable_audio_steps",
+                    "stable_audio_guidance_scale",
+                    "stable_audio_sampler",
+                    "stable_audio_hf_token",
+                }
+                if k in allowed:
                     parsed[k] = v
 
         # Optional: parse subtitle key + suggested English text.

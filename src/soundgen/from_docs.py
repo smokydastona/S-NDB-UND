@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import shutil
 from pathlib import Path
-from types import SimpleNamespace
 
 from .manifest import ManifestItem
 from .doc_reader import UnsupportedDocumentError, extract_sound_prompts, read_document_text, to_prompt
@@ -30,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Glob pattern inside the folder (default: **/*)",
     )
 
-    p.add_argument("--engine", choices=["rfxgen", "diffusers"], default="rfxgen")
+    p.add_argument("--engine", choices=["rfxgen", "diffusers", "stable_audio_open"], default="rfxgen")
     p.add_argument(
         "--prefer-doc-manifest",
         action=argparse.BooleanOptionalAction,
@@ -140,9 +139,44 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seconds", type=float, default=3.0)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--preset", default=None, help="rfxgen preset override")
+    p.add_argument(
+        "--hf-token",
+        default=None,
+        help="Optional Hugging Face token for gated models (e.g. Stable Audio Open). If omitted, uses your HF login / env vars.",
+    )
     p.add_argument("--rfxgen-path", default=None)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--model", default="cvssp/audioldm2")
+
+    # Stable Audio Open 1.0 (engine=stable_audio_open)
+    p.add_argument(
+        "--stable-audio-model",
+        default="stabilityai/stable-audio-open-1.0",
+        help="For engine=stable_audio_open: Hugging Face model id (typically gated; accept terms + login).",
+    )
+    p.add_argument(
+        "--stable-audio-negative-prompt",
+        default=None,
+        help="For engine=stable_audio_open: optional negative prompt.",
+    )
+    p.add_argument(
+        "--stable-audio-steps",
+        type=int,
+        default=100,
+        help="For engine=stable_audio_open: diffusion steps (default 100).",
+    )
+    p.add_argument(
+        "--stable-audio-guidance-scale",
+        type=float,
+        default=7.0,
+        help="For engine=stable_audio_open: guidance/CFG scale (default 7.0).",
+    )
+    p.add_argument(
+        "--stable-audio-sampler",
+        default="auto",
+        choices=["auto", "ddim", "deis", "dpmpp", "dpmpp_2m", "euler", "euler_a"],
+        help="For engine=stable_audio_open: sampler/scheduler (default auto).",
+    )
 
     # Diffusers multi-band mode (model-side; slower)
     p.add_argument("--diffusers-multiband", action="store_true")
@@ -194,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Build the base args object expected by batch.run_item
     base_pack_root = Path(args.pack_root)
-    run_args = SimpleNamespace(
+    run_args = argparse.Namespace(
         pack_root=str(base_pack_root),
         mc_target=args.mc_target,
         ogg_quality=args.ogg_quality,
@@ -212,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         diffusers_mb_high_hz=float(getattr(args, "diffusers_mb_high_hz", 3000.0)),
         # Pro controls
         pro_preset=str(getattr(args, "pro_preset", "off")),
+        polish_profile=str(getattr(args, "polish_profile", "off")),
         polish=bool(args.polish),
         emotion=str(args.emotion),
         intensity=float(args.intensity),
@@ -234,6 +269,15 @@ def main(argv: list[str] | None = None) -> int:
         reverb=str(args.reverb),
         reverb_mix=float(args.reverb_mix),
         reverb_time=float(args.reverb_time),
+        loop=bool(getattr(args, "loop", False)),
+        loop_crossfade_ms=int(getattr(args, "loop_crossfade_ms", 100)),
+
+        denoise_amount=getattr(args, "denoise_amount", None),
+        transient_attack=getattr(args, "transient_attack", None),
+        transient_sustain=getattr(args, "transient_sustain", None),
+        exciter_amount=getattr(args, "exciter_amount", None),
+        compressor_attack_ms=getattr(args, "compressor_attack_ms", None),
+        compressor_release_ms=getattr(args, "compressor_release_ms", None),
     )
 
     exported = 0
@@ -329,6 +373,32 @@ def main(argv: list[str] | None = None) -> int:
                     seconds=float(seconds),
                     seed=int(seed) if seed is not None else None,
                     preset=preset,
+
+                    stable_audio_model=(
+                        (str(e.get("stable_audio_model") or "").strip() if prefer_doc else "")
+                        or str(getattr(args, "stable_audio_model", "") or "").strip()
+                        or None
+                    ),
+                    stable_audio_negative_prompt=(
+                        (str(e.get("stable_audio_negative_prompt") or "").strip() if prefer_doc else "")
+                        or (str(getattr(args, "stable_audio_negative_prompt", "") or "").strip())
+                        or None
+                    ),
+                    stable_audio_steps=(
+                        int(e["stable_audio_steps"]) if (prefer_doc and e.get("stable_audio_steps") not in (None, "")) else int(getattr(args, "stable_audio_steps", 100))
+                    ),
+                    stable_audio_guidance_scale=(
+                        float(e["stable_audio_guidance_scale"]) if (prefer_doc and e.get("stable_audio_guidance_scale") not in (None, "")) else float(getattr(args, "stable_audio_guidance_scale", 7.0))
+                    ),
+                    stable_audio_sampler=(
+                        (str(e.get("stable_audio_sampler") or "").strip() if prefer_doc else "")
+                        or str(getattr(args, "stable_audio_sampler", "auto") or "auto")
+                    ),
+                    stable_audio_hf_token=(
+                        (str(e.get("stable_audio_hf_token") or "").strip() if prefer_doc else "")
+                        or (str(getattr(args, "hf_token", "") or "").strip())
+                        or None
+                    ),
                     variants=int(variants),
                     weight=max(1, int(args.weight)),
                     volume=float(args.volume),
@@ -342,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not item.prompt:
                     continue
 
-                outs = run_item(item, args=run_args)
+                outs = run_item(item, args=run_args, parser=parser)
                 exported += len(outs)
                 for o in outs:
                     print(f"Wrote {o}")
@@ -369,6 +439,15 @@ def main(argv: list[str] | None = None) -> int:
             seconds=float(args.seconds),
             seed=args.seed,
             preset=args.preset,
+
+            stable_audio_model=(str(getattr(args, "stable_audio_model", "") or "").strip() or None),
+            stable_audio_negative_prompt=(
+                (str(getattr(args, "stable_audio_negative_prompt", "") or "").strip()) or None
+            ),
+            stable_audio_steps=int(getattr(args, "stable_audio_steps", 100)),
+            stable_audio_guidance_scale=float(getattr(args, "stable_audio_guidance_scale", 7.0)),
+            stable_audio_sampler=str(getattr(args, "stable_audio_sampler", "auto") or "auto"),
+            stable_audio_hf_token=(str(getattr(args, "hf_token", "") or "").strip() or None),
             variants=max(1, int(args.variants)),
             weight=max(1, int(args.weight)),
             volume=float(args.volume),
@@ -378,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
             tags=("from_doc", doc.suffix.lower().lstrip(".")),
         )
 
-        outs = run_item(item, args=run_args)
+        outs = run_item(item, args=run_args, parser=parser)
         exported += len(outs)
         for o in outs:
             print(f"Wrote {o}")
