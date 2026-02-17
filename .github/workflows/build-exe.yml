@@ -3,8 +3,8 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - "**"
   release:
     types: [published]
 
@@ -35,26 +35,27 @@ jobs:
       - name: Build EXEs
         shell: pwsh
         run: |
-          ./scripts/build_exe.ps1 -Clean
+          ./scripts/build_exe.ps1 -Clean -Version $env:GITHUB_RUN_NUMBER
 
       - name: Package artifacts
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/soundgen-generate -DestinationPath dist/soundgen-generate-windows.zip -Force
-          Compress-Archive -Path dist/soundgen-web -DestinationPath dist/soundgen-web-windows.zip -Force
+          $ver = $env:GITHUB_RUN_NUMBER
+          Compress-Archive -Path "dist/soundgen-generate-$ver" -DestinationPath "dist/soundgen-generate-$ver-windows.zip" -Force
+          Compress-Archive -Path "dist/soundgen-web-$ver" -DestinationPath "dist/soundgen-web-$ver-windows.zip" -Force
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: soundgen-windows-exes
+          name: soundgen-windows-exes-${{ github.run_number }}
           path: |
-            dist/soundgen-generate-windows.zip
-            dist/soundgen-web-windows.zip
+            dist/soundgen-generate-${{ github.run_number }}-windows.zip
+            dist/soundgen-web-${{ github.run_number }}-windows.zip
 
       - name: Upload release assets
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/soundgen-generate-windows.zip
-            dist/soundgen-web-windows.zip
+            dist/soundgen-generate-${{ github.run_number }}-windows.zip
+            dist/soundgen-web-${{ github.run_number }}-windows.zip

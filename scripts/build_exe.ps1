@@ -1,6 +1,7 @@
 Param(
   [string]$OutDir = "dist",
   [string]$WorkDir = "build",
+  [string]$Version = "",
   [switch]$Clean
 )
 
@@ -21,7 +22,15 @@ python -m pip install -r requirements.txt | Out-Null
 
 # Build two executables (folder-based /onedir for reliability)
 # Note: AI engines (torch/diffusers/transformers) make these builds large.
-pyinstaller --noconfirm --clean --onedir --name soundgen-generate \
+$genName = "soundgen-generate"
+$webName = "soundgen-web"
+if ($Version -and $Version.Trim().Length -gt 0) {
+  $ver = $Version.Trim()
+  $genName = "$genName-$ver"
+  $webName = "$webName-$ver"
+}
+
+pyinstaller --noconfirm --clean --onedir --name $genName \
   --collect-all soundgen \
   --collect-all numpy \
   --collect-all scipy \
@@ -34,7 +43,7 @@ pyinstaller --noconfirm --clean --onedir --name soundgen-generate \
   -m soundgen.generate \
   --distpath $OutDir --workpath $WorkDir
 
-pyinstaller --noconfirm --clean --onedir --name soundgen-web \
+pyinstaller --noconfirm --clean --onedir --name $webName \
   --collect-all soundgen \
   --collect-all gradio \
   --collect-all numpy \
@@ -48,4 +57,4 @@ pyinstaller --noconfirm --clean --onedir --name soundgen-web \
   -m soundgen.web \
   --distpath $OutDir --workpath $WorkDir
 
-Write-Host "Built executables into $OutDir\\soundgen-generate and $OutDir\\soundgen-web"
+Write-Host "Built executables into $OutDir\\$genName and $OutDir\\$webName"

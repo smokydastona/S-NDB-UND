@@ -24,8 +24,14 @@ def _generate(
     prompt: str,
     seconds: float,
     seed: int | None,
+    candidates: int,
     device: str,
     model: str,
+    stable_audio_model: str,
+    stable_audio_negative_prompt: str,
+    stable_audio_hf_token: str,
+    stable_audio_steps: int,
+    stable_audio_guidance_scale: float,
     diffusers_multiband: bool,
     diffusers_mb_mode: str,
     diffusers_mb_low_hz: float,
@@ -120,7 +126,7 @@ def _generate(
         if preset_obj is not None:
             # Prompt augmentation for AI/sample selection engines.
             eng = str(engine or "").strip().lower()
-            if preset_obj.prompt_suffix and eng in {"diffusers", "replicate", "samplelib", "layered"}:
+            if preset_obj.prompt_suffix and eng in {"diffusers", "stable_audio_open", "replicate", "samplelib", "layered"}:
                 suf = str(preset_obj.prompt_suffix).strip()
                 if suf and suf.lower() not in str(prompt).lower():
                     prompt = str(prompt).rstrip() + ", " + suf
@@ -449,26 +455,15 @@ def _generate(
         flag_s = (" " + " ".join(flags)) if flags else ""
         return f"qa: {m.seconds:.2f}s @ {m.sample_rate}Hz peak={m.peak:.3f} rms={m.rms:.3f}{flag_s}".strip()
 
-    def _maybe_postprocess_array(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
+    def _postprocess_fn(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
         if not (post or polish):
             return audio, _qa_info(audio, sr)
-        processed, rep = post_process_audio(audio, sr, _pp_params())
-        return processed, f"post: trimmed={rep.trimmed} {_qa_info(processed, sr)}".strip()
-
-    def _maybe_postprocess_wav(wav_path: Path) -> tuple[np.ndarray, int, str]:
-        a, sr = read_wav_mono(wav_path)
+        pp = _pp_params()
         # Tie stochastic DSP to the current variant seed.
-        if post or polish:
-            pp = _pp_params()
-            pp = replace(pp, random_seed=int(seed_i) if seed_i is not None else None)
-            a, rep = post_process_audio(a, sr, pp)
-            info = f"post: trimmed={rep.trimmed} {_qa_info(a, sr)}".strip()
-            write_wav(wav_path, a, sr)
-            return a, sr, info
-        a, info = _maybe_postprocess_array(a, sr)
-        if post or polish:
-            write_wav(wav_path, a, sr)
-        return a, sr, info
+        pp = replace(pp, random_seed=int(seed_i) if seed_i is not None else None)
+        processed, rep = post_process_audio(audio, sr, pp)
+        info = f"post: trimmed={rep.trimmed} {_qa_info(processed, sr)}".strip()
+        return processed, info
 
     def _export_non_minecraft(wav_path: Path, target_path: Path) -> Path:
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -580,58 +575,80 @@ def _generate(
         else:
             source_seed_i = None
 
-        generated = generate_wav(
-            engine,
-            prompt=prompt2,
-            seconds=float(seconds),
-            seed=seed_i,
-            out_wav=wav_path,
-            device=device,
-            model=model,
-            diffusers_multiband=bool(diffusers_multiband),
-            diffusers_multiband_mode=str(diffusers_mb_mode or "auto"),
-            diffusers_multiband_low_hz=float(diffusers_mb_low_hz),
-            diffusers_multiband_high_hz=float(diffusers_mb_high_hz),
-            preset=(preset or None),
-            rfxgen_path=(Path(rfxgen_path) if rfxgen_path else None),
-            library_zips=default_zips,
-            library_mix_count=max(1, int(library_mix_count)),
-            sample_rate=44100,
-            synth_waveform=str(synth_waveform),
-            synth_freq_hz=440.0,
-            synth_attack_ms=synth_attack,
-            synth_release_ms=synth_release,
-            synth_pitch_min=synth_pitch_min,
-            synth_pitch_max=synth_pitch_max,
-            synth_lowpass_hz=synth_lp,
-            synth_highpass_hz=synth_hp,
-            synth_drive=synth_drive,
+        try:
+            generated = generate_wav(
+                engine,
+                prompt=prompt2,
+                seconds=float(seconds),
+                seed=seed_i,
+                out_wav=wav_path,
+                candidates=max(1, int(candidates or 1)),
+                postprocess_fn=_postprocess_fn,
+                device=device,
+                model=model,
+                stable_audio_model=str(stable_audio_model or "stabilityai/stable-audio-open-1.0"),
+                stable_audio_negative_prompt=(stable_audio_negative_prompt or None),
+                stable_audio_hf_token=(stable_audio_hf_token or None),
+                stable_audio_steps=int(stable_audio_steps),
+                stable_audio_guidance_scale=float(stable_audio_guidance_scale),
+                diffusers_multiband=bool(diffusers_multiband),
+                diffusers_multiband_mode=str(diffusers_mb_mode or "auto"),
+                diffusers_multiband_low_hz=float(diffusers_mb_low_hz),
+                diffusers_multiband_high_hz=float(diffusers_mb_high_hz),
+                preset=(preset or None),
+                rfxgen_path=(Path(rfxgen_path) if rfxgen_path else None),
+                library_zips=default_zips,
+                library_mix_count=max(1, int(library_mix_count)),
+                sample_rate=44100,
+                synth_waveform=str(synth_waveform),
+                synth_freq_hz=440.0,
+                synth_attack_ms=synth_attack,
+                synth_release_ms=synth_release,
+                synth_pitch_min=synth_pitch_min,
+                synth_pitch_max=synth_pitch_max,
+                synth_lowpass_hz=synth_lp,
+                synth_highpass_hz=synth_hp,
+                synth_drive=synth_drive,
 
-            layered_preset=str(layered_preset or "auto"),
-            layered_env_curve_shape=str(layered_curve or "linear"),
-            layered_preset_lock=True,
-            layered_variant_index=int(i),
-            layered_micro_variation=float(layered_micro_variation),
-            layered_transient_tilt=float(layered_transient_tilt),
-            layered_body_tilt=float(layered_body_tilt),
-            layered_tail_tilt=float(layered_tail_tilt),
-            layered_source_lock=bool(layered_source_lock),
-            layered_source_seed=(int(source_seed_i) if source_seed_i is not None else None),
-            layered_granular_preset=str(layered_granular_preset),
-            layered_granular_amount=float(layered_granular_amount),
-            layered_granular_grain_ms=float(layered_granular_grain_ms),
-            layered_granular_spray=float(layered_granular_spray),
-            layered_duck_amount=float(layered_duck),
-            layered_transient_attack_ms=float(transient_attack_ms),
-            layered_transient_hold_ms=10.0,
-            layered_transient_decay_ms=float(transient_decay_ms),
-            layered_tail_ms=int(tail_len_ms),
-            layered_tail_attack_ms=15.0,
-            layered_tail_decay_ms=float(tail_decay_ms),
-        )
+                layered_preset=str(layered_preset or "auto"),
+                layered_env_curve_shape=str(layered_curve or "linear"),
+                layered_preset_lock=True,
+                layered_variant_index=int(i),
+                layered_micro_variation=float(layered_micro_variation),
+                layered_transient_tilt=float(layered_transient_tilt),
+                layered_body_tilt=float(layered_body_tilt),
+                layered_tail_tilt=float(layered_tail_tilt),
+                layered_source_lock=bool(layered_source_lock),
+                layered_source_seed=(int(source_seed_i) if source_seed_i is not None else None),
+                layered_granular_preset=str(layered_granular_preset),
+                layered_granular_amount=float(layered_granular_amount),
+                layered_granular_grain_ms=float(layered_granular_grain_ms),
+                layered_granular_spray=float(layered_granular_spray),
+                layered_duck_amount=float(layered_duck),
+                layered_transient_attack_ms=float(transient_attack_ms),
+                layered_transient_hold_ms=10.0,
+                layered_transient_decay_ms=float(transient_decay_ms),
+                layered_tail_ms=int(tail_len_ms),
+                layered_tail_attack_ms=15.0,
+                layered_tail_decay_ms=float(tail_decay_ms),
+            )
+        except Exception as e:
+            msg = str(e).strip() or e.__class__.__name__
+            eng = str(engine or "").strip().lower()
+            if eng == "stable_audio_open":
+                msg = (
+                    f"ERROR: {msg}\n\n"
+                    "Stable Audio Open is often gated on Hugging Face. "
+                    "Accept the model terms on the HF model page and set HUGGINGFACE_HUB_TOKEN "
+                    "(or run `huggingface-cli login`)."
+                )
+            else:
+                msg = f"ERROR: {msg}"
+            return "", "", msg, None, None
         last_file = Path(generated.wav_path)
 
-        a, sr, info = _maybe_postprocess_wav(last_file)
+        a, sr = read_wav_mono(last_file)
+        info = str(generated.post_info) if generated.post_info else _qa_info(a, sr)
         wav_img = waveform_image(a, sr)
         spec_img = spectrogram_image(a, sr)
 
@@ -685,7 +702,7 @@ def main() -> None:
     with gr.Blocks(title="Sound Generator") as demo:
         gr.Markdown("# Prompt → Sound Effect")
         with gr.Accordion("Engine & preset", open=True):
-            engine = gr.Radio(["diffusers", "rfxgen", "samplelib", "synth", "layered"], value="diffusers", label="Engine")
+            engine = gr.Radio(["diffusers", "stable_audio_open", "rfxgen", "samplelib", "synth", "layered"], value="diffusers", label="Engine")
             with gr.Row():
                 device = gr.Dropdown(["cpu", "cuda"], value="cpu", label="Device")
                 model = gr.Dropdown(
@@ -693,6 +710,18 @@ def main() -> None:
                     value="cvssp/audioldm2",
                     label="Model",
                 )
+
+            with gr.Accordion("Stable Audio Open (engine settings)", open=False):
+                stable_audio_model = gr.Dropdown(
+                    ["stabilityai/stable-audio-open-1.0"],
+                    value="stabilityai/stable-audio-open-1.0",
+                    label="Stable Audio model",
+                )
+                stable_audio_negative_prompt = gr.Textbox(value="", label="Negative prompt (optional)")
+                stable_audio_hf_token = gr.Textbox(value="", label="HF token (optional; not saved)")
+                with gr.Row():
+                    stable_audio_steps = gr.Slider(10, 200, value=100, step=1, label="Steps")
+                    stable_audio_guidance_scale = gr.Slider(1.0, 12.0, value=7.0, step=0.5, label="Guidance (CFG)")
 
             with gr.Accordion("Diffusers multi-band (model-side)", open=False):
                 diffusers_multiband = gr.Checkbox(value=False, label="Enable multi-band diffusers (slower, cleaner bands)")
@@ -780,6 +809,7 @@ def main() -> None:
             with gr.Row():
                 seconds = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Seconds")
                 seed = gr.Number(value=None, precision=0, label="Seed (optional)")
+                candidates = gr.Slider(1, 8, value=1, step=1, label="Candidates (best-of-N)")
             map_controls = gr.Checkbox(value=False, label="Map prompt → control hints")
 
         gr.Markdown("## Export")
@@ -920,8 +950,14 @@ def main() -> None:
                 prompt,
                 seconds,
                 seed,
+                candidates,
                 device,
                 model,
+                stable_audio_model,
+                stable_audio_negative_prompt,
+                stable_audio_hf_token,
+                stable_audio_steps,
+                stable_audio_guidance_scale,
                 diffusers_multiband,
                 diffusers_mb_mode,
                 diffusers_mb_low_hz,

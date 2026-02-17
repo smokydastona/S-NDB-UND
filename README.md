@@ -2,15 +2,29 @@
 
 Generate short sound effects from a text prompt.
 
-This project supports five engines:
+This project supports six engines:
 
 - **diffusers**: AI prompt-to-audio (AudioLDM2)
+- **stable_audio_open**: AI prompt-to-audio (Stable Audio Open 1.0 via diffusers; typically gated)
 - **rfxgen**: procedural chiptune-style SFX presets (coin/laser/explosion/etc)
 - **samplelib**: picks + randomizes samples from ZIP sound libraries (uses ffmpeg to decode)
 - **synth**: DSP synth engine (waveforms + ADSR + filters + drive)
 - **layered**: hybrid engine (samplelib transient/tail + synth body)
 
 ## Setup (Windows)
+
+Fast path (recommended):
+
+```powershell
+# Creates .venv, installs deps, and runs diagnostics
+./scripts/setup.ps1
+
+# Optional: also download rfxgen.exe
+./scripts/setup.ps1 -WithRfxgen
+
+# Optional: also verify Stable Audio Open HF access (requires you to have accepted HF terms)
+./scripts/setup.ps1 -CheckStableAudio
+```
 
 1) Create a virtual env:
 
@@ -27,18 +41,33 @@ pip install -r requirements.txt
 
 > Note: The first run will download model weights.
 
+## Troubleshooting
+
+Quick diagnostics:
+
+```powershell
+python -m soundgen.doctor
+python -m soundgen.doctor --check-stable-audio
+```
+
+- **Stable Audio Open says gated/unauthorized/accept terms**: open the Hugging Face model page for `stabilityai/stable-audio-open-1.0`, accept the terms, then authenticate (`huggingface-cli login` or set `HUGGINGFACE_HUB_TOKEN`).
+- **MP3/OGG export fails**: install `ffmpeg` and make sure it’s on `PATH`. Quick install on Windows: `winget install Gyan.FFmpeg`.
+- **rfxgen engine fails**: download `rfxgen.exe` with [scripts/get_rfxgen.ps1](scripts/get_rfxgen.ps1) or pass `--rfxgen-path tools/rfxgen/rfxgen.exe`.
+- **CUDA issues / torch mismatch**: start with `--device cpu`. If you want GPU, install a torch build that matches your CUDA drivers.
+- **Python install problems**: if dependency installs fail on very new Python versions, try Python 3.12 (the GitHub Actions EXE build uses 3.12).
+
 ## Windows .exe builds (optional)
 
 This repo can build Windows executables via GitHub Actions.
 
 - The workflow is in `.github/workflows/build-exe.yml`.
-- Builds produce two zipped folders:
-	- `soundgen-generate-windows.zip` (CLI generator)
-	- `soundgen-web-windows.zip` (Gradio UI)
+- Builds produce two zipped folders (versioned per workflow run):
+	- `soundgen-generate-<run>-windows.zip` (CLI generator)
+	- `soundgen-web-<run>-windows.zip` (Gradio UI)
 
 How to get them:
 
-- **GitHub Actions**: run the workflow manually (Actions → “Build Windows EXE”) and download the `soundgen-windows-exes` artifact.
+- **GitHub Actions**: builds run on every push. Download the `soundgen-windows-exes-<run>` artifact.
 - **GitHub Releases**: if you publish a release, the workflow attaches the same ZIPs to the release.
 
 Notes:
@@ -64,6 +93,31 @@ This repo includes a small, curated demo pack under [soundpack_v1/README.md](sou
 
 ```powershell
 	python -m soundgen.generate --prompt "laser zap" --seconds 2.5 --out outputs\laser.wav
+```
+
+### Best-of-N candidate selection
+
+For engines that have randomness (AI/sample selection/etc), you can generate multiple candidates and automatically pick the best using QA metrics.
+
+```powershell
+# Pick the best of 6 generations (scores clipping/peak/rms/long-tail)
+python -m soundgen.generate --engine diffusers --candidates 6 --prompt "coin pickup" --seed 123 --post --out outputs\coin_best.wav
+```
+
+The selected candidate + per-candidate QA stats are recorded in the credits JSON under `best_of_n`.
+
+### Stable Audio Open (diffusers)
+
+Stable Audio Open is often gated on Hugging Face. If you get an auth/terms error:
+
+- Accept the model terms on the Hugging Face model page
+- Set `HUGGINGFACE_HUB_TOKEN` (or run `huggingface-cli login`)
+
+Example:
+
+```powershell
+python -m soundgen.generate --engine stable_audio_open --hf-token <YOUR_TOKEN>
+python -m soundgen.generate --engine stable_audio_open --candidates 4 --stable-audio-steps 100 --stable-audio-guidance-scale 7 --prompt "metallic ui confirm" --seconds 1.2 --seed 42 --post --out outputs\ui_confirm.wav
 ```
 
 ### Polish mode (DSP)

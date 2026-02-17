@@ -22,18 +22,53 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Generate a sound effect WAV from a text prompt.")
     p.add_argument(
         "--engine",
-        choices=["diffusers", "rfxgen", "replicate", "samplelib", "synth", "layered"],
+        choices=["diffusers", "stable_audio_open", "rfxgen", "replicate", "samplelib", "synth", "layered"],
         default="diffusers",
-        help="Generation engine: diffusers (AI), rfxgen (procedural presets), replicate (paid API), samplelib (sample library zips), synth (DSP), or layered (samplelib transient/tail + synth body).",
+        help="Generation engine: diffusers (AI), stable_audio_open (AI), rfxgen (procedural presets), replicate (paid API), samplelib (sample library zips), synth (DSP), or layered (samplelib transient/tail + synth body).",
     )
     p.add_argument("--prompt", required=True, help="Text prompt describing the sound.")
     p.add_argument("--seconds", type=float, default=3.0, help="Duration in seconds.")
     p.add_argument("--seed", type=int, default=None, help="Random seed for repeatability.")
+    p.add_argument(
+        "--candidates",
+        type=int,
+        default=1,
+        help="Generate N candidates and pick the best using QA metrics (clip/peak/rms/long-tail). Default 1.",
+    )
+    p.add_argument(
+        "--hf-token",
+        default=None,
+        help="Optional Hugging Face token for gated models (e.g. Stable Audio Open). If omitted, uses your HF login / env vars.",
+    )
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="Compute device.")
     p.add_argument(
         "--model",
         default="cvssp/audioldm2",
         help="Diffusers pretrained model id (e.g. cvssp/audioldm2).",
+    )
+
+    # Stable Audio Open 1.0 (diffusers StableAudioPipeline)
+    p.add_argument(
+        "--stable-audio-model",
+        default="stabilityai/stable-audio-open-1.0",
+        help="For engine=stable_audio_open: Hugging Face model id (typically gated; accept terms + login).",
+    )
+    p.add_argument(
+        "--stable-audio-negative-prompt",
+        default=None,
+        help="For engine=stable_audio_open: optional negative prompt.",
+    )
+    p.add_argument(
+        "--stable-audio-steps",
+        type=int,
+        default=100,
+        help="For engine=stable_audio_open: diffusion steps (default 100).",
+    )
+    p.add_argument(
+        "--stable-audio-guidance-scale",
+        type=float,
+        default=7.0,
+        help="For engine=stable_audio_open: guidance/CFG scale (default 7.0).",
     )
 
     # Diffusers multi-band mode (runs multiple generations and recombines bands).
@@ -797,6 +832,7 @@ def main(argv: list[str] | None = None) -> int:
             seconds=float(args.seconds),
             seed=seed,
             out_wav=out_wav,
+            candidates=max(1, int(args.candidates or 1)),
             postprocess_fn=_postprocess_fn_for_engine(
                 args.engine,
                 post_seed=(int(seed) if seed is not None else None),
@@ -804,6 +840,11 @@ def main(argv: list[str] | None = None) -> int:
             ),
             device=str(args.device),
             model=str(args.model),
+            stable_audio_model=str(args.stable_audio_model or "stabilityai/stable-audio-open-1.0"),
+            stable_audio_negative_prompt=(args.stable_audio_negative_prompt or None),
+            stable_audio_steps=int(args.stable_audio_steps),
+            stable_audio_guidance_scale=float(args.stable_audio_guidance_scale),
+            stable_audio_hf_token=(args.hf_token or None),
             diffusers_multiband=bool(args.diffusers_multiband),
             diffusers_multiband_mode=str(args.diffusers_mb_mode or "auto"),
             diffusers_multiband_low_hz=float(args.diffusers_mb_low_hz),
@@ -870,7 +911,7 @@ def main(argv: list[str] | None = None) -> int:
             for i in range(variants):
                 suffix = f"_{i+1:02d}" if variants > 1 else ""
                 tmp_wav = Path(tmp) / f"{args.engine}{suffix}.wav"
-                if args.engine in {"diffusers", "samplelib", "synth"}:
+                if args.engine in {"diffusers", "stable_audio_open", "samplelib", "synth"}:
                     seed_i = int(base_seed) + i
                 elif args.engine == "layered":
                     seed_i = int(base_seed) if args.layered_family else (int(base_seed) + i)
