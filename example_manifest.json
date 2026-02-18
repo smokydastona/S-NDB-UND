@@ -1,0 +1,44 @@
+[
+  {
+    "engine": "rfxgen",
+    "namespace": "mymod",
+    "event": "ui.coin",
+    "prompt": "coin pickup",
+    "variants": 2,
+    "weight": 2,
+    "volume": 0.9,
+    "pitch": 1.0,
+    "subtitle": "Coin",
+    "post": true,
+    "tags": "ui,coin"
+  },
+  {
+    "engine": "rfxgen",
+    "namespace": "mymod",
+    "event": "ui.hit",
+    "prompt": "short click hit",
+    "variants": 1,
+    "subtitle": "Hit",
+    "post": true
+  },
+  {
+    "namespace": "mymod",
+    "event": "creature.roar",
+    "sfx_preset": "creature_medium_roar",
+    "variants": 6,
+    "subtitle": "Roar",
+    "fx_chain": "creature_grit",
+    "post": true,
+    "tags": "creature,roar"
+  },
+  {
+    "namespace": "mymod",
+    "event": "amb.forest",
+    "sfx_preset": "ambient_forest",
+    "variants": 2,
+    "subtitle": "Forest",
+    "fx_chain": "distant_ambient",
+    "post": true,
+    "tags": "ambient,loop"
+  }
+]

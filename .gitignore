@@ -26,6 +26,7 @@ library/
 # Examples (local sandbox)
 .examples/
 example_*.json
+!example_manifest.json
 
 # Pre-generated prompt inputs (drop docs here)
 pre_gen_sound/
