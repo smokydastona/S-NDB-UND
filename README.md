@@ -458,6 +458,17 @@ python -m soundgen.generate --engine layered --layered-xfade-transient-to-body-m
 python -m soundgen.generate --engine layered --layered-transient-hp-hz 120 --layered-body-lp-hz 6500 --layered-tail-drive 0.25 --layered-tail-gain-db 3 --prompt "creature hiss" --seconds 1.6 --post --out outputs\hiss_fx.wav
 ```
 
+Suggested starting points (designer-safe defaults)
+
+All values are optional; anything not specified stays at its default. Remember: `0` disables a knob.
+
+| Goal | Crossfades | Per-layer FX |
+|---|---|---|
+| **UI click / coin** (keep transient crisp, gentle glue) | `--layered-xfade-transient-to-body-ms 8` `--layered-xfade-body-to-tail-ms 18` | `--layered-body-hp-hz 120` `--layered-body-lp-hz 9000` |
+| **Impact** (punch + controlled body) | `--layered-xfade-transient-to-body-ms 12` `--layered-xfade-body-to-tail-ms 30` | `--layered-body-drive 0.10` `--layered-body-lp-hz 7000` |
+| **Whoosh** (smooth ramp, less “click”) | `--layered-xfade-transient-to-body-ms 25` `--layered-xfade-body-to-tail-ms 70` | `--layered-transient-lp-hz 8000` `--layered-tail-lp-hz 10000` |
+| **Creature hiss / rasp** (shape the tail + remove mud) | `--layered-xfade-transient-to-body-ms 18` `--layered-xfade-body-to-tail-ms 55` | `--layered-tail-hp-hz 120` `--layered-tail-drive 0.20` `--layered-tail-gain-db 2` |
+
 Source lock (pin transient/tail samples across variants):
 
 ```powershell

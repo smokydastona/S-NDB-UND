@@ -53,9 +53,9 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
   - Inference-time LoRA loading exists for `stable_audio_open` (creature families).
   - Next step: provide training recipes for one or two popular stacks (diffusers+accelerate recommended).
 
-- **3.3 Multi‑engine blending** — **In repo (layered), Next (more blending)**
-  - `layered` already mixes samplelib transient/tail with synth body.
-  - Next: add optional parallel FX chains per layer + controlled crossfades.
+- **3.3 Multi‑engine blending** — **Done (layered v1)**
+  - `layered` mixes samplelib transient/tail with synth body.
+  - Added: controlled crossfades (transient→body, body→tail) and optional per-layer FX (HP/LP/drive/gain).
 
 - **3.4 Looping + ambience tools** — **In repo (basic), Next (loop suite)**
   - Loop-clean + crossfade exists.
