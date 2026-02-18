@@ -24,6 +24,7 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later (optional)**
 - **In repo (basic)**: seamless loop preview (cyclic crossfade on loop audition) (`l`)
 - **In repo (basic)**: multi-region slicing + export-all (`R`, `O`) with per-region FX hook (`C`)
 - **In repo (basic)**: per-region loop point metadata export (`{`, `}`)
+- **In repo (basic)**: simple layering (up to 4 total) with per-layer gain/pan/fades/pitch (`i`, `y`, `L`, `b`)
 
 ## v2 Completion Checklist (Definition A)
 

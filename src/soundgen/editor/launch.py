@@ -154,6 +154,42 @@ def _repair_click_linear(x: np.ndarray, *, lo: int, hi: int) -> np.ndarray:
     return y
 
 
+def _resample_linear(x: np.ndarray, *, rate: float) -> np.ndarray:
+    """Resample using linear interpolation.
+
+    rate > 1.0 makes the audio shorter and higher-pitched (playback-rate style).
+    """
+
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(x.size)
+    rate = float(rate)
+    if n <= 1 or abs(rate - 1.0) < 1e-9:
+        return x
+    rate = max(0.05, min(rate, 20.0))
+
+    new_n = int(max(1, round(float(n) / rate)))
+    src_idx = np.arange(new_n, dtype=np.float32) * float(rate)
+    src_idx = np.clip(src_idx, 0.0, float(n - 1))
+    xp = np.arange(n, dtype=np.float32)
+    y = np.interp(src_idx, xp, x).astype(np.float32)
+    return y
+
+
+def _apply_edge_fades(x: np.ndarray, *, fade_in: int, fade_out: int) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(x.size)
+    if n <= 1:
+        return x
+    fi = max(0, min(int(fade_in), n))
+    fo = max(0, min(int(fade_out), n))
+    y = x.copy()
+    if fi > 0:
+        y[:fi] = _fade_in(y[:fi])
+    if fo > 0:
+        y[-fo:] = _fade_out(y[-fo:])
+    return y
+
+
 def _normalize_peak(x: np.ndarray, *, target_db: float = -1.0) -> tuple[np.ndarray, float]:
     peak = float(np.max(np.abs(x)) + 1e-12)
     peak_db = _lin_to_db(peak)
@@ -173,6 +209,8 @@ class _State:
     markers: list[dict[str, Any]] | None = None
     regions: list[dict[str, Any]] | None = None
     active_region: int | None = None
+    layers: list[dict[str, Any]] | None = None
+    active_layer: int | None = None
     edits: list[dict[str, Any]] | None = None
     export_count: int = 0
     view_mode: str = "wave"  # wave|spec
@@ -190,6 +228,8 @@ class _State:
             markers=[] if not self.markers else [dict(m) for m in self.markers],
             regions=[] if not self.regions else [dict(r) for r in self.regions],
             active_region=(None if self.active_region is None else int(self.active_region)),
+            layers=[] if not self.layers else [dict(l) for l in self.layers],
+            active_layer=(None if self.active_layer is None else int(self.active_layer)),
             edits=[] if not self.edits else [dict(e) for e in self.edits],
             export_count=int(self.export_count),
             view_mode=str(self.view_mode),
@@ -315,7 +355,9 @@ def _write_edits_sidecar(wav_path: Path, *, state: _State, mode: str) -> None:
         "loop_s": None,
         "markers": [],
         "regions": [],
+        "layers": [],
         "active_region": (int(state.active_region) if state.active_region is not None else None),
+        "active_layer": (int(state.active_layer) if state.active_layer is not None else None),
         "edits": list(state.edits or []),
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -362,6 +404,9 @@ def _write_edits_sidecar(wav_path: Path, *, state: _State, mode: str) -> None:
             )
         rec["regions"] = out
 
+    if state.layers:
+        rec["layers"] = [dict(l) for l in state.layers]
+
     sidecar.write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -405,6 +450,12 @@ def _help_text() -> str:
         "  n: normalize peak to -1 dBFS (whole file)\n"
         "  +/-: gain ±1 dB (selection if present else whole file)\n"
         "\n"
+        "  i: import layer WAV at cursor (max 4 layers total)\n"
+        "  y: cycle active layer\n"
+        "  L: edit active layer params (gain/pan/fades/pitch)\n"
+        "  Y: delete active layer\n"
+        "  b: play mixed (layers) from cursor\n"
+        "\n"
         "  m: add marker at cursor\n"
         "  M: add transient marker at cursor\n"
         "  G: add good-take marker at cursor\n"
@@ -443,6 +494,8 @@ def launch_editor(wav_path: str | Path) -> None:
         markers=[],
         regions=[],
         active_region=None,
+        layers=[],
+        active_layer=None,
         edits=[],
     )
     undo = _Undo(limit=60)
@@ -627,6 +680,195 @@ def launch_editor(wav_path: str | Path) -> None:
         if st.regions is None:
             st.regions = []
         return st.regions
+
+    def _layer_list() -> list[dict[str, Any]]:
+        if st.layers is None:
+            st.layers = []
+        return st.layers
+
+    def _set_active_layer(idx: int | None) -> None:
+        if idx is None:
+            st.active_layer = None
+            return
+        ll = _layer_list()
+        if not ll:
+            st.active_layer = None
+            return
+        st.active_layer = int(max(0, min(int(idx), len(ll) - 1)))
+
+    def _active_layer_obj() -> dict[str, Any] | None:
+        if st.active_layer is None:
+            return None
+        ll = _layer_list()
+        idx = int(st.active_layer)
+        if idx < 0 or idx >= len(ll):
+            return None
+        return ll[idx]
+
+    def _layer_prev_next(step: int) -> None:
+        ll = _layer_list()
+        if not ll:
+            st.active_layer = None
+            return
+        if st.active_layer is None:
+            _set_active_layer(0)
+        else:
+            _set_active_layer((int(st.active_layer) + int(step)) % len(ll))
+        _push_edit("layer_select", {"active": int(st.active_layer) if st.active_layer is not None else None})
+        _render()
+
+    def _import_layer() -> None:
+        ll = _layer_list()
+        # Max 4 layers total: base + up to 3 overlays.
+        if len(ll) >= 3:
+            print("Max overlay layers reached (3).")
+            return
+        try:
+            p = input("Layer WAV path: ").strip().strip('"')
+        except Exception:
+            return
+        if not p:
+            return
+        path = Path(p)
+        if not path.exists():
+            print(f"Not found: {path}")
+            return
+        x2, sr2 = read_wav_mono(path)
+        if int(sr2) != int(st.sample_rate):
+            print(f"Layer sample rate {sr2} != project {st.sample_rate}; import uses original samples (no resample).")
+        undo.push(st)
+        rec = {
+            "name": str(path.stem),
+            "path": str(path),
+            "offset": int(st.cursor),
+            "gain_db": 0.0,
+            "pan": 0.0,
+            "fade_in_ms": 0.0,
+            "fade_out_ms": 0.0,
+            "pitch_semitones": 0.0,
+            "audio": x2.astype(np.float32, copy=True),
+        }
+        ll.append(rec)
+        _set_active_layer(len(ll) - 1)
+        _push_edit("layer_import", {"name": rec["name"], "offset": int(rec["offset"]), "samples": int(rec["audio"].size)})
+        _render()
+
+    def _delete_active_layer() -> None:
+        ll = _layer_list()
+        if not ll or st.active_layer is None:
+            return
+        idx = int(st.active_layer)
+        if idx < 0 or idx >= len(ll):
+            return
+        undo.push(st)
+        name = str(ll[idx].get("name") or "layer")
+        del ll[idx]
+        if not ll:
+            st.active_layer = None
+        else:
+            st.active_layer = int(max(0, min(idx, len(ll) - 1)))
+        _push_edit("layer_delete", {"name": name})
+        _render()
+
+    def _edit_active_layer_params() -> None:
+        layer = _active_layer_obj()
+        if layer is None:
+            print("No active layer.")
+            return
+        try:
+            print("Layer params (press enter to keep current):")
+            print(f"  name={layer.get('name')}  offset={layer.get('offset')} samples")
+            g = input(f"  gain_db [{layer.get('gain_db', 0.0)}]: ").strip()
+            p = input(f"  pan [-1..1] [{layer.get('pan', 0.0)}]: ").strip()
+            fi = input(f"  fade_in_ms [{layer.get('fade_in_ms', 0.0)}]: ").strip()
+            fo = input(f"  fade_out_ms [{layer.get('fade_out_ms', 0.0)}]: ").strip()
+            ps = input(f"  pitch_semitones [{layer.get('pitch_semitones', 0.0)}]: ").strip()
+        except Exception:
+            return
+
+        undo.push(st)
+        if g:
+            layer["gain_db"] = float(g)
+        if p:
+            layer["pan"] = float(max(-1.0, min(1.0, float(p))))
+        if fi:
+            layer["fade_in_ms"] = float(max(0.0, float(fi)))
+        if fo:
+            layer["fade_out_ms"] = float(max(0.0, float(fo)))
+        if ps:
+            layer["pitch_semitones"] = float(ps)
+        _push_edit(
+            "layer_params",
+            {
+                "name": str(layer.get("name") or "layer"),
+                "gain_db": float(layer.get("gain_db") or 0.0),
+                "pan": float(layer.get("pan") or 0.0),
+                "fade_in_ms": float(layer.get("fade_in_ms") or 0.0),
+                "fade_out_ms": float(layer.get("fade_out_ms") or 0.0),
+                "pitch_semitones": float(layer.get("pitch_semitones") or 0.0),
+            },
+        )
+        _render()
+
+    def _mix_audio(*, stereo: bool) -> np.ndarray:
+        base = st.audio.astype(np.float32, copy=False)
+        layers = _layer_list()
+        if not layers:
+            if stereo:
+                return np.stack([base, base], axis=1).astype(np.float32, copy=False)
+            return base
+
+        # Pre-compute output length.
+        out_len = int(base.size)
+        for layer in layers:
+            x = np.asarray(layer.get("audio"), dtype=np.float32).reshape(-1)
+            off = int(layer.get("offset") or 0)
+            out_len = max(out_len, int(off) + int(x.size))
+        out_len = max(out_len, 1)
+
+        if stereo:
+            out = np.zeros((out_len, 2), dtype=np.float32)
+            out[: int(base.size), 0] += base
+            out[: int(base.size), 1] += base
+        else:
+            out = np.zeros(out_len, dtype=np.float32)
+            out[: int(base.size)] += base
+
+        for layer in layers:
+            x = np.asarray(layer.get("audio"), dtype=np.float32).reshape(-1)
+            if x.size == 0:
+                continue
+
+            semis = float(layer.get("pitch_semitones") or 0.0)
+            rate = float(2.0 ** (semis / 12.0))
+            x2 = _resample_linear(x, rate=rate)
+
+            fi = int(round(float(layer.get("fade_in_ms") or 0.0) / 1000.0 * float(st.sample_rate)))
+            fo = int(round(float(layer.get("fade_out_ms") or 0.0) / 1000.0 * float(st.sample_rate)))
+            x2 = _apply_edge_fades(x2, fade_in=fi, fade_out=fo)
+
+            gain = _db_to_lin(float(layer.get("gain_db") or 0.0))
+            x2 = (x2 * float(gain)).astype(np.float32)
+
+            off = int(layer.get("offset") or 0)
+            off = max(0, min(off, out_len))
+            end = min(out_len, off + int(x2.size))
+            if end <= off:
+                continue
+            x2 = x2[: end - off]
+
+            if stereo:
+                pan = float(layer.get("pan") or 0.0)
+                pan = float(max(-1.0, min(1.0, pan)))
+                ang = float((pan + 1.0) * (math.pi / 4.0))
+                gl = float(math.cos(ang))
+                gr = float(math.sin(ang))
+                out[off:end, 0] += (x2 * gl).astype(np.float32)
+                out[off:end, 1] += (x2 * gr).astype(np.float32)
+            else:
+                out[off:end] += x2
+
+        return out
 
     def _active_region_obj() -> dict[str, Any] | None:
         if st.active_region is None:
@@ -1039,6 +1281,8 @@ def launch_editor(wav_path: str | Path) -> None:
         st.markers = src.markers
         st.regions = src.regions
         st.active_region = src.active_region
+        st.layers = src.layers
+        st.active_layer = src.active_layer
         st.edits = src.edits
         st.export_count = src.export_count
         st.view_mode = src.view_mode
@@ -1243,7 +1487,15 @@ def launch_editor(wav_path: str | Path) -> None:
             st.export_count += 1
             out_path = wav_path.with_name(f"{wav_path.stem}_edit{st.export_count}{wav_path.suffix}")
             mode = "variation"
-        write_wav(out_path, _clip_mono(st.audio), int(st.sample_rate))
+        # If layers use pan, export as stereo so pan is meaningful.
+        use_stereo = any(abs(float(l.get("pan") or 0.0)) > 1e-6 for l in (_layer_list() or []))
+        rendered = _mix_audio(stereo=use_stereo)
+        if use_stereo:
+            import soundfile as sf
+
+            sf.write(str(out_path), np.clip(rendered, -1.0, 1.0), int(st.sample_rate), subtype="PCM_16")
+        else:
+            write_wav(out_path, _clip_mono(rendered), int(st.sample_rate))
         _write_edits_sidecar(out_path, state=st, mode=mode)
         _push_edit("export", {"mode": mode, "path": str(out_path)})
         print(f"Exported: {out_path}")
@@ -1252,7 +1504,18 @@ def launch_editor(wav_path: str | Path) -> None:
         if sys.platform != "win32":
             print("Playback is only implemented on Windows in this editor.")
             return
+        # Base audio playback (edits apply here). Layered preview is on 'b'.
         player.play_segment(audio=st.audio, sr=st.sample_rate, start=int(st.cursor), end=int(st.audio.size), loop=loop)
+
+    def _play_mix_from_cursor() -> None:
+        if sys.platform != "win32":
+            print("Playback is only implemented on Windows in this editor.")
+            return
+        use_stereo = any(abs(float(l.get("pan") or 0.0)) > 1e-6 for l in (_layer_list() or []))
+        mix = _mix_audio(stereo=use_stereo)
+        start = max(0, min(int(st.cursor), int(mix.shape[0] if mix.ndim == 2 else mix.size)))
+        end = int(mix.shape[0] if mix.ndim == 2 else mix.size)
+        player.play_segment(audio=mix, sr=st.sample_rate, start=start, end=end, loop=False)
 
     def _play_selection(loop: bool) -> None:
         rng = _sel_range()
@@ -1476,6 +1739,26 @@ def launch_editor(wav_path: str | Path) -> None:
 
         if key in {"l"}:
             _play_selection(loop=True)
+            return
+
+        if key in {"b"}:
+            _play_mix_from_cursor()
+            return
+
+        if key in {"i"}:
+            _import_layer()
+            return
+
+        if key in {"y"}:
+            _layer_prev_next(+1)
+            return
+
+        if key in {"L"}:
+            _edit_active_layer_params()
+            return
+
+        if key in {"Y"}:
+            _delete_active_layer()
             return
 
         if key in {"c"}:
