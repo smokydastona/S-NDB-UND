@@ -25,6 +25,9 @@ python -m soundgen.web
 # CLI (single sound)
 python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav
 
+# CLI + open in the built-in editor after generation
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav --edit
+
 # Minecraft export
 python -m soundgen.generate --engine rfxgen --minecraft --namespace mymod --event ui.coin --subtitle "Coin" --prompt "coin pickup" --post
 ```
@@ -154,6 +157,20 @@ Design/spec docs:
 
 - One-stop shop definition + phased scope: [docs/one_stop_shop.md](docs/one_stop_shop.md)
 - Built-in editor v1 UI layout + interactions: [docs/editor_v1_ui_layout.md](docs/editor_v1_ui_layout.md)
+
+## Built-in editor (destructive, single-file)
+
+Open any WAV from disk:
+
+```powershell
+S-NDB-UND.exe edit outputs\coin.wav
+```
+
+Or generate then open automatically:
+
+```powershell
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav --edit
+```
 
 Preset library v1 (drop-in example file):
 

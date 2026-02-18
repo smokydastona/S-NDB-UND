@@ -73,7 +73,7 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
   - Offline effect stack abstraction (configurable post stack + presets).
   - Best-of-N is consistent across workflows: `--candidates` (single + web) and `candidates` in batch/docs manifests; implemented centrally in `soundgen.engine_registry.generate_wav`.
 
-- **3.6 Built-in SFX editor (laser-focused, not a DAW)** — **Next (v1)**
+- **3.6 Built-in SFX editor (laser-focused, not a DAW)** — **Done (v1)**
   - Goal: a small, destructive single-file editor for generated SFX and WAVs from disk.
   - Fits pipeline: **Engine → Post-FX → Editor → Export**
     - Generated sounds open directly in editor after creation (optional toggle).
@@ -89,6 +89,7 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
     - **Markers**: mark transients, loop points, “good takes”.
     - **Playback**: play from cursor, play selection, loop selection.
     - **Export**: overwrite, “save as new variation” (auto suffix: `_edit1`, `_trim`, `_loopfix`, …).
+  - Implemented in `soundgen.editor.launch` (matplotlib waveform UI + Windows playback), wired via `python -m soundgen.generate --edit` and `S-NDB-UND.exe edit <wav>`.
 
   **Editor repo takeaways (applied, scope-safe)**
   - **Mode split (Zoom vs Selection)**: copy the explicit mode toggle idea (zoom-only interactions vs selection/edit interactions) to reduce accidental edits and simplify gestures (from Web-Audio-Editor).
@@ -112,7 +113,7 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
     - **Pitfalls to avoid** (called out by Resound):
       - Tail-extending FX (reverb/delay) must not be hard-cut when the source ends (editor should optionally render/drain tails).
       - Realtime parameter changes need synchronization to avoid racey reads/writes (thread-safe params or audio-thread ownership).
-  - Tech stack (Python): PySide6/PyQt6 + (pyqtgraph **or** downsampled QPainter) + sounddevice for playback; processing remains numpy/scipy.
+  - Tech stack (Python): matplotlib (interactive waveform UI) + stdlib playback on Windows; processing remains numpy/scipy.
   - **v2 nice-to-haves (Later)**:
     - Spectrogram view (click/noise hunting).
     - Multi-region per file (slice one WAV into multiple exports).

@@ -34,10 +34,12 @@ def _print_help() -> None:
         "  S-NDB-UND.exe web <args>       (Gradio UI in your browser)\n"
         "  S-NDB-UND.exe desktop <args>   (UI in an embedded desktop window)\n"
         "  S-NDB-UND.exe mobset <args>    (Minecraft mob soundset generator)\n"
+        "  S-NDB-UND.exe edit <wav>       (Built-in destructive editor)\n"
         "  S-NDB-UND.exe loop <args>      (Loop suite: auto loop points, tail trim, noise bed helpers)\n\n"
         "Help:\n"
         "  S-NDB-UND.exe mobset --help\n"
         "  S-NDB-UND.exe generate --help\n"
+        "  S-NDB-UND.exe edit --help\n"
         "  S-NDB-UND.exe loop --help\n"
     )
 
@@ -80,6 +82,15 @@ def main(argv: list[str] | None = None) -> int:
         from .mob_soundset import run_mob_soundset
 
         return int(run_mob_soundset(rest))
+
+    if cmd == "edit":
+        if not rest or rest[0] in {"-h", "--help", "help"}:
+            print("Usage: S-NDB-UND.exe edit <path-to-wav>")
+            return 0
+        from .editor import launch_editor
+
+        launch_editor(rest[0])
+        return 0
 
     if cmd == "loop":
         from .loop_suite import run_loop_suite

@@ -660,6 +660,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p.add_argument("--out", default="outputs/out.wav", help="Output WAV path.")
+    p.add_argument(
+        "--edit",
+        action="store_true",
+        help="Open the built-in destructive editor after generation (non-Minecraft outputs).",
+    )
 
     # Export format options (non-Minecraft)
     p.add_argument(
@@ -1230,6 +1235,12 @@ def main(argv: list[str] | None = None) -> int:
 
         sp = str(args.sound_path or f"generated/{slug}")
         _write_credits(sound_path=sp, wav_path=final_path, ogg_path=None, generated=generated)
+
+        if getattr(args, "edit", False) and str(fmt) == "wav":
+            # Keep editor deps optional by importing only when invoked.
+            from .editor import launch_editor
+
+            launch_editor(final_path)
     return 0
 
 
