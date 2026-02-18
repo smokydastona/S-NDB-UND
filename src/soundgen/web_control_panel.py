@@ -23,6 +23,34 @@ from .rfxgen_backend import SUPPORTED_PRESETS
 from .ui_models import Variant, normalize_variants_state
 
 
+AudioCache = dict[str, tuple[int, np.ndarray]]
+
+
+def _cache_key(variant_id: str, kind: str) -> str:
+    return f"{str(variant_id)}::{str(kind)}"
+
+
+def _variant_active_audio_key(v: dict[str, Any]) -> str | None:
+    k = str(v.get("edited_audio_key") or "").strip()
+    if k:
+        return k
+    k = str(v.get("audio_key") or "").strip()
+    return k or None
+
+
+def _audio_from_variant(v: dict[str, Any], cache: AudioCache) -> tuple[int, np.ndarray] | None:
+    k = _variant_active_audio_key(v)
+    if k and k in cache:
+        return cache[k]
+
+    # Fallback for older state: load from disk.
+    p = Path(str(v.get("edited_wav_path") or v.get("wav_path") or ""))
+    if p.exists() and p.suffix.lower() == ".wav":
+        a, sr = read_wav_mono(p)
+        return int(sr), a.astype(np.float32, copy=False)
+    return None
+
+
 def _rms_dbfs(rms: float) -> float:
     r = float(rms)
     if r <= 0.0:
@@ -300,7 +328,7 @@ def _run_generate_variants(
     rfxgen_path: str,
     post: bool,
     polish: bool,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], AudioCache]:
     eng = str(engine or "").strip()
     pr = str(prompt or "").strip()
     sec = float(seconds)
@@ -313,6 +341,7 @@ def _run_generate_variants(
         base_seed = int(base_seed) + 1
 
     out: list[dict[str, Any]] = []
+    cache: AudioCache = {}
     for i in range(n):
         vid = _variant_id(i)
         seed_i = int(base_seed) + i
@@ -341,6 +370,8 @@ def _run_generate_variants(
         )
 
         a, sr = read_wav_mono(Path(res.wav_path))
+        base_key = _cache_key(vid, "base")
+        cache[base_key] = (int(sr), a.astype(np.float32, copy=False))
         m = compute_metrics(a, int(sr))
         out.append(
             Variant(
@@ -350,13 +381,15 @@ def _run_generate_variants(
                 rms_dbfs=_rms_dbfs(float(m.rms)),
                 locked=False,
                 select=False,
+                audio_key=base_key,
+                edited_audio_key=None,
                 wav_path=str(res.wav_path),
                 edited_wav_path=None,
                 meta={},
             ).to_dict()
         )
 
-    return normalize_variants_state(out)
+    return normalize_variants_state(out), cache
 
 
 def _ui_generate_variants(
@@ -372,10 +405,10 @@ def _ui_generate_variants(
     rfxgen_path: str,
     post: bool,
     polish: bool,
-) -> tuple[list[dict[str, Any]], list[list[object]], dict, str, int]:
+) -> tuple[list[dict[str, Any]], AudioCache, list[list[object]], dict, str, int]:
     try:
         bs = int(base_seed) if base_seed is not None else 1337
-        variants = _run_generate_variants(
+        variants, cache = _run_generate_variants(
             engine,
             prompt,
             float(seconds),
@@ -395,13 +428,14 @@ def _ui_generate_variants(
             next_seed = variants[0]["seed"] if variants else bs
         elif str(seed_mode or "").strip().lower() == "step":
             next_seed = bs + 1
-        return variants, _rows_from_variants(variants), dd, f"Generated {len(variants)} variant(s).", int(next_seed)
+        return variants, cache, _rows_from_variants(variants), dd, f"Generated {len(variants)} variant(s).", int(next_seed)
     except Exception as e:
-        return [], [], gr.update(choices=[], value=None), f"Generate failed: {e}", int(base_seed or 1337)
+        return [], {}, [], gr.update(choices=[], value=None), f"Generate failed: {e}", int(base_seed or 1337)
 
 
 def _ui_regen_unlocked(
     variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
     engine: str,
     prompt: str,
     seconds: float,
@@ -413,9 +447,9 @@ def _ui_regen_unlocked(
     rfxgen_path: str,
     post: bool,
     polish: bool,
-) -> tuple[list[dict[str, Any]], list[list[object]], dict, str, int]:
+) -> tuple[list[dict[str, Any]], AudioCache, list[list[object]], dict, str, int]:
     if not variants:
-        return [], [], gr.update(choices=[], value=None), "No variants to regenerate.", int(base_seed or 1337)
+        return [], audio_cache or {}, [], gr.update(choices=[], value=None), "No variants to regenerate.", int(base_seed or 1337)
 
     try:
         bs = int(base_seed) if base_seed is not None else 1337
@@ -426,6 +460,7 @@ def _ui_regen_unlocked(
             bs = bs + 1
 
         out: list[dict[str, Any]] = []
+        cache: AudioCache = dict(audio_cache or {})
         regen = 0
         for i, v in enumerate(variants):
             if not isinstance(v, dict):
@@ -461,30 +496,40 @@ def _ui_regen_unlocked(
             )
 
             a, sr = read_wav_mono(Path(res.wav_path))
+            base_key = _cache_key(vid, "base")
+            cache[base_key] = (int(sr), a.astype(np.float32, copy=False))
             m = compute_metrics(a, int(sr))
             v2 = dict(v)
             v2["seed"] = seed_i
             v2["seconds"] = float(m.seconds)
             v2["rms_dbfs"] = _rms_dbfs(float(m.rms))
+            v2["audio_key"] = base_key
+            v2["edited_audio_key"] = None
             v2["wav_path"] = str(res.wav_path)
             v2["edited_wav_path"] = None
             out.append(v2)
             regen += 1
 
         dd = gr.update(choices=[v["id"] for v in out], value=(out[0]["id"] if out else None))
-        return out, _rows_from_variants(out), dd, f"Regenerated {regen} unlocked variant(s).", int(bs)
+        out_norm = normalize_variants_state(out)
+        return out_norm, cache, _rows_from_variants(out_norm), dd, f"Regenerated {regen} unlocked variant(s).", int(bs)
     except Exception as e:
-        return variants, _rows_from_variants(variants), gr.update(), f"Regenerate failed: {e}", int(base_seed or 1337)
+        vnorm = normalize_variants_state(variants)
+        return vnorm, (audio_cache or {}), _rows_from_variants(vnorm), gr.update(), f"Regenerate failed: {e}", int(base_seed or 1337)
 
 
-def _ui_variant_audio(variants: list[dict[str, Any]], current_variant: str) -> tuple[tuple[int, np.ndarray] | None, object, object, str, str]:
+def _ui_variant_audio(
+    variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
+    current_variant: str,
+) -> tuple[tuple[int, np.ndarray] | None, object, object, str, str]:
     vid = str(current_variant or "").strip()
     for v in variants or []:
         if isinstance(v, dict) and str(v.get("id")) == vid:
-            p = Path(str(v.get("edited_wav_path") or v.get("wav_path") or ""))
-            if not p.exists():
-                return None, None, None, "Missing WAV.", ""
-            a, sr = read_wav_mono(p)
+            got = _audio_from_variant(v, audio_cache or {})
+            if got is None:
+                return None, None, None, "Missing audio.", ""
+            sr, a = got
             m = compute_metrics(a, int(sr))
             analysis = f"seconds={m.seconds:.2f} sr={m.sample_rate} peak={m.peak:.3f} rms_dbfs={_fmt_db(_rms_dbfs(float(m.rms)))}"
             return (int(sr), a.astype(np.float32, copy=False)), waveform_image(a, sr), spectrogram_image(a, sr), "", analysis
@@ -493,28 +538,30 @@ def _ui_variant_audio(variants: list[dict[str, Any]], current_variant: str) -> t
 
 def _ui_waveform_apply_edits(
     variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
     current_variant: str,
     start_s: float,
     end_s: float,
     fade_in_ms: int,
     fade_out_ms: int,
-) -> tuple[list[dict[str, Any]], tuple[int, np.ndarray] | None, object, object, str, str]:
+) -> tuple[list[dict[str, Any]], AudioCache, tuple[int, np.ndarray] | None, object, object, str, str]:
     vid = str(current_variant or "").strip()
     if not vid:
-        return variants, None, None, None, "Select a variant first.", ""
+        return variants, (audio_cache or {}), None, None, None, "Select a variant first.", ""
 
     out: list[dict[str, Any]] = []
+    cache: AudioCache = dict(audio_cache or {})
     for v in variants or []:
         if not isinstance(v, dict) or str(v.get("id")) != vid:
             out.append(v)
             continue
 
-        p = Path(str(v.get("wav_path") or ""))
-        if not p.exists():
+        got = _audio_from_variant(v, cache)
+        if got is None:
             out.append(v)
-            return out, None, None, None, f"Missing WAV for {vid}.", ""
+            return out, cache, None, None, None, f"Missing audio for {vid}.", ""
 
-        a, sr = read_wav_mono(p)
+        sr, a = got
         n = int(a.size)
         ss = max(0.0, float(start_s))
         ee = float(end_s)
@@ -537,23 +584,25 @@ def _ui_waveform_apply_edits(
             if fade_len > 1:
                 y[-fade_len:] *= np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
 
-        out_path = Path("outputs") / f"cp_{uuid.uuid4().hex}_{vid}_edited.wav"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        write_wav(out_path, y.astype(np.float32, copy=False), int(sr), subtype="PCM_16")
+        edit_key = _cache_key(vid, "edit")
+        cache[edit_key] = (int(sr), y.astype(np.float32, copy=False))
 
         v2 = dict(v)
-        v2["edited_wav_path"] = str(out_path)
+        v2["edited_audio_key"] = edit_key
+        v2["edited_wav_path"] = None
         out.append(v2)
 
         m = compute_metrics(y, int(sr))
         analysis = f"seconds={m.seconds:.2f} sr={m.sample_rate} peak={m.peak:.3f} rms_dbfs={_fmt_db(_rms_dbfs(float(m.rms)))}"
-        return out, (int(sr), y), waveform_image(y, int(sr)), spectrogram_image(y, int(sr)), f"Applied edits to {vid}.", analysis
+        out_norm = normalize_variants_state(out)
+        return out_norm, cache, (int(sr), y), waveform_image(y, int(sr)), spectrogram_image(y, int(sr)), f"Applied edits to {vid}.", analysis
 
-    return variants, None, None, None, "Variant not found.", ""
+    return normalize_variants_state(variants), cache, None, None, None, "Variant not found.", ""
 
 
 def _ui_fx_slots_apply(
     variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
     current_variant: str,
     slots_df: list[list[object]] | None,
 ) -> tuple[tuple[int, np.ndarray] | None, str]:
@@ -563,17 +612,15 @@ def _ui_fx_slots_apply(
     if not vid:
         return None, "Select a variant first."
 
-    wav_path = None
     for v in variants or []:
         if isinstance(v, dict) and str(v.get("id")) == vid:
-            wav_path = v.get("edited_wav_path") or v.get("wav_path")
+            got = _audio_from_variant(v, audio_cache or {})
+            if got is None:
+                return None, "Missing audio for selected variant."
+            sr, a = got
             break
-    if not wav_path:
-        return None, "Missing WAV for selected variant."
-
-    p = Path(str(wav_path))
-    if not p.exists() or p.suffix.lower() != ".wav":
-        return None, "FX apply requires a .wav input."
+    else:
+        return None, "Missing audio for selected variant."
 
     steps: list[FxStepV2] = []
     for r in (slots_df or []):
@@ -593,13 +640,13 @@ def _ui_fx_slots_apply(
         steps.append(FxStepV2(module_id=mid, params=dict(params)))
 
     chain = FxChainV2(name="control_panel", steps=tuple(steps), description=None)
-    a, sr = read_wav_mono(p)
     y = apply_fx_chain_v2(a, int(sr), chain)
     return (int(sr), y.astype(np.float32, copy=False)), "Applied FX slots."
 
 
 def _ui_export_bundle(
     variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
     mode: str,
     out_format: str,
     out_sample_rate: int | None,
@@ -646,9 +693,11 @@ def _ui_export_bundle(
         for v in picks:
             vid = str(v.get("id") or "variant")
             seed = v.get("seed")
-            src = Path(str(v.get("edited_wav_path") or v.get("wav_path") or ""))
-            if not src.exists():
+
+            got = _audio_from_variant(v, audio_cache or {})
+            if got is None:
                 continue
+            sr_in, a_in = got
 
             name = templ
             name = name.replace("{variant}", vid)
@@ -659,25 +708,22 @@ def _ui_export_bundle(
             if not name:
                 name = vid
 
-            wav_in = src
-            if src.suffix.lower() != ".wav":
-                tmp = out_dir / f"_{vid}_tmp.wav"
-                convert_audio_with_ffmpeg(src, tmp, sample_rate=None, channels=1, out_format="wav")
-                wav_in = tmp
-
             out_file = out_dir / f"{name}.{fmt}"
             if fmt == "wav":
-                a, sr = read_wav_mono(wav_in)
-                sr_out = int(out_sample_rate) if out_sample_rate else int(sr)
-                if sr_out != int(sr):
-                    convert_audio_with_ffmpeg(wav_in, out_file, sample_rate=sr_out, channels=1, out_format="wav")
+                sr_out = int(out_sample_rate) if out_sample_rate else int(sr_in)
+                if sr_out != int(sr_in):
+                    tmp = out_dir / f"_{vid}_tmp_resample.wav"
+                    write_wav(tmp, a_in.astype(np.float32, copy=False), int(sr_in), subtype="PCM_16")
+                    convert_audio_with_ffmpeg(tmp, out_file, sample_rate=sr_out, channels=1, out_format="wav")
                     a2, sr2 = read_wav_mono(out_file)
                     write_wav(out_file, a2.astype(np.float32, copy=False), int(sr2), subtype=str(wav_subtype))
                 else:
-                    write_wav(out_file, a.astype(np.float32, copy=False), int(sr), subtype=str(wav_subtype))
+                    write_wav(out_file, a_in.astype(np.float32, copy=False), int(sr_in), subtype=str(wav_subtype))
             else:
+                tmp = out_dir / f"_{vid}_tmp_src.wav"
+                write_wav(tmp, a_in.astype(np.float32, copy=False), int(sr_in), subtype="PCM_16")
                 convert_audio_with_ffmpeg(
-                    wav_in,
+                    tmp,
                     out_file,
                     sample_rate=(int(out_sample_rate) if out_sample_rate else None),
                     channels=1,
@@ -704,6 +750,7 @@ def build_demo_control_panel() -> gr.Blocks:
         )
 
         variants_state = gr.State([])
+        audio_cache_state = gr.State({})
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -888,13 +935,14 @@ def build_demo_control_panel() -> gr.Blocks:
                 post,
                 polish,
             ],
-            outputs=[variants_state, variants_df, current_variant, gen_status, seed],
+            outputs=[variants_state, audio_cache_state, variants_df, current_variant, gen_status, seed],
         )
 
         regen_btn.click(
             fn=_ui_regen_unlocked,
             inputs=[
                 variants_state,
+                audio_cache_state,
                 engine,
                 prompt,
                 seconds,
@@ -907,34 +955,39 @@ def build_demo_control_panel() -> gr.Blocks:
                 post,
                 polish,
             ],
-            outputs=[variants_state, variants_df, current_variant, gen_status, seed],
+            outputs=[variants_state, audio_cache_state, variants_df, current_variant, gen_status, seed],
         )
 
         variants_df.change(fn=_variants_from_df, inputs=[variants_df, variants_state], outputs=[variants_state])
 
         load_btn.click(
             fn=_ui_variant_audio,
-            inputs=[variants_state, current_variant],
+            inputs=[variants_state, audio_cache_state, current_variant],
             outputs=[viewer_audio, viewer_wave, viewer_spec, viewer_status, analysis_txt],
         )
         load_btn.click(
-            fn=lambda v, c: _ui_variant_audio(v, c)[2],
-            inputs=[variants_state, current_variant],
+            fn=lambda v, ac, c: _ui_variant_audio(v, ac, c)[2],
+            inputs=[variants_state, audio_cache_state, current_variant],
             outputs=[analysis_spec],
         )
 
         apply_edits_btn.click(
             fn=_ui_waveform_apply_edits,
-            inputs=[variants_state, current_variant, start_s, end_s, fade_in_ms, fade_out_ms],
-            outputs=[variants_state, viewer_audio, viewer_wave, viewer_spec, viewer_status, analysis_txt],
+            inputs=[variants_state, audio_cache_state, current_variant, start_s, end_s, fade_in_ms, fade_out_ms],
+            outputs=[variants_state, audio_cache_state, viewer_audio, viewer_wave, viewer_spec, viewer_status, analysis_txt],
         )
 
-        fx_apply_btn.click(fn=_ui_fx_slots_apply, inputs=[variants_state, current_variant, fx_slots], outputs=[fx_audio_out, fx_status])
+        fx_apply_btn.click(
+            fn=_ui_fx_slots_apply,
+            inputs=[variants_state, audio_cache_state, current_variant, fx_slots],
+            outputs=[fx_audio_out, fx_status],
+        )
 
         export_btn.click(
             fn=_ui_export_bundle,
             inputs=[
                 variants_state,
+                audio_cache_state,
                 ex_mode,
                 ex_fmt,
                 ex_sr,

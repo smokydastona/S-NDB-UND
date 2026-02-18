@@ -11,6 +11,8 @@ class VariantDict(TypedDict, total=False):
     rms_dbfs: float
     locked: bool
     select: bool
+    audio_key: str
+    edited_audio_key: str | None
     wav_path: str
     edited_wav_path: str | None
     meta: dict[str, Any]
@@ -24,6 +26,8 @@ class Variant:
     rms_dbfs: float
     locked: bool = False
     select: bool = False
+    audio_key: str = ""
+    edited_audio_key: str | None = None
     wav_path: str = ""
     edited_wav_path: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
@@ -37,6 +41,8 @@ class Variant:
             rms_dbfs=float(d.get("rms_dbfs") if d.get("rms_dbfs") is not None else float("-inf")),
             locked=bool(d.get("locked", False)),
             select=bool(d.get("select", False)),
+            audio_key=str(d.get("audio_key") or ""),
+            edited_audio_key=(str(d.get("edited_audio_key")) if d.get("edited_audio_key") else None),
             wav_path=str(d.get("wav_path") or ""),
             edited_wav_path=(str(d.get("edited_wav_path")) if d.get("edited_wav_path") else None),
             meta=(dict(d.get("meta")) if isinstance(d.get("meta"), dict) else {}),
@@ -50,6 +56,8 @@ class Variant:
             "rms_dbfs": float(self.rms_dbfs),
             "locked": bool(self.locked),
             "select": bool(self.select),
+            "audio_key": str(self.audio_key or ""),
+            "edited_audio_key": (str(self.edited_audio_key) if self.edited_audio_key else None),
             "wav_path": str(self.wav_path),
             "edited_wav_path": (str(self.edited_wav_path) if self.edited_wav_path else None),
             "meta": dict(self.meta),
