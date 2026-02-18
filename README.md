@@ -276,6 +276,33 @@ python -m soundgen.generate --engine synth --prompt "wind bed" --seconds 8 --pos
 
 In the Web UI (`python -m soundgen.web`), use the **polish profile** dropdown next to the post/polish toggles.
 
+### FX chains (v1)
+
+If you want a simpler, shareable “mix recipe” for game-ready output, use `--fx-chain`.
+FX chains apply conservatively (like `--polish-profile`): they only override values that are still at their defaults, so you can still tweak individual knobs.
+
+Built-in chains:
+
+- `tight_game_ready`
+- `creature_grit`
+- `distant_ambient`
+- `ui_polish`
+- `clean_normalized`
+
+Examples:
+
+```powershell
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --fx-chain ui_polish --out outputs\ui.wav
+python -m soundgen.generate --engine layered --prompt "monster roar" --fx-chain creature_grit --seconds 1.6 --out outputs\roar.wav
+python -m soundgen.generate --engine synth --prompt "cave wind ambience" --fx-chain distant_ambient --seconds 8 --out outputs\amb.wav
+```
+
+You can also load a chain from JSON:
+
+```powershell
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --fx-chain-json my_chain.json --out outputs\out.wav
+```
+
 ### Pro controls (conditioning + DSP)
 
 These controls are applied in the post-processing stage, so they work with any engine when `--post` or `--polish` is enabled.

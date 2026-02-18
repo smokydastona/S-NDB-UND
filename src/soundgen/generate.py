@@ -16,6 +16,7 @@ from .credits import upsert_pack_credits, write_sidecar_credits
 from .controls import map_prompt_to_controls
 from .pro_presets import apply_pro_preset, pro_preset_keys
 from .polish_profiles import apply_polish_profile, polish_profile_keys
+from .fx_chains import apply_fx_chain, fx_chain_keys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -276,6 +277,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="off",
         help="Named post/polish profile (AAA-style chain). Only overrides values still at their defaults.",
     )
+
+    # FX chains (v1): named chains + optional JSON definition.
+    p.add_argument(
+        "--fx-chain",
+        choices=["off", *fx_chain_keys()],
+        default="off",
+        help="Named FX chain preset (shareable post chain). Only overrides values still at their defaults.",
+    )
+    p.add_argument(
+        "--fx-chain-json",
+        default=None,
+        help="Load an FX chain JSON file. Supports either an args-patch JSON or an effect-list JSON.",
+    )
     p.add_argument(
         "--map-controls",
         action="store_true",
@@ -434,6 +448,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override compressor release (ms) for polish mode (omit to use defaults).",
     )
+
+    p.add_argument(
+        "--compressor-threshold-db",
+        type=float,
+        default=None,
+        help="Override compressor threshold (dBFS). If omitted, uses polish/conditioning defaults.",
+    )
+    p.add_argument(
+        "--compressor-ratio",
+        type=float,
+        default=None,
+        help="Override compressor ratio (e.g. 3.0). If omitted, uses default.",
+    )
+    p.add_argument(
+        "--compressor-makeup-db",
+        type=float,
+        default=None,
+        help="Override compressor makeup gain (dB). If omitted, uses polish/conditioning defaults.",
+    )
+    p.add_argument(
+        "--limiter-ceiling-db",
+        type=float,
+        default=None,
+        help="Override limiter ceiling (dBFS). If omitted, uses polish defaults (when enabled).",
+    )
     p.add_argument(
         "--compressor-follower-mode",
         choices=["peak", "rms"],
@@ -455,6 +494,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--post-stack",
         default=None,
         help="Advanced: override post chain ordering (comma-separated block keys).",
+    )
+
+    p.add_argument(
+        "--noise-bed-db",
+        type=float,
+        default=None,
+        help="Add a noise bed at this level (dBFS), e.g. -40. Omit to disable.",
+    )
+    p.add_argument(
+        "--noise-bed-seed",
+        type=int,
+        default=None,
+        help="Noise bed RNG seed (optional). Defaults to post random seed if set, else 0.",
     )
 
     # Synth engine (DSP) controls
@@ -629,6 +681,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Apply FX chain first so later presets only fill remaining defaults,
+    # and explicit user flags are never clobbered.
+    apply_fx_chain(chain_key=str(getattr(args, "fx_chain", "off")), chain_json=getattr(args, "fx_chain_json", None), args=args, parser=parser)
+
     # Apply pro preset after parsing so we can compare against argparse defaults.
     apply_pro_preset(preset_key=str(args.pro_preset), args=args, parser=parser)
     apply_polish_profile(profile_key=str(getattr(args, "polish_profile", "off")), args=args, parser=parser)
@@ -716,6 +772,16 @@ def main(argv: list[str] | None = None) -> int:
         if exciter_ovr is not None:
             exciter = float(np.clip(float(exciter_ovr), 0.0, 1.0))
 
+        # Compressor/Limiter explicit overrides (win over polish defaults).
+        comp_thr_ovr = getattr(args, "compressor_threshold_db", None)
+        if comp_thr_ovr is not None:
+            comp_thr = float(comp_thr_ovr)
+        comp_ratio_ovr = getattr(args, "compressor_ratio", None)
+        comp_makeup_ovr = getattr(args, "compressor_makeup_db", None)
+        limiter_ovr = getattr(args, "limiter_ceiling_db", None)
+        if limiter_ovr is not None:
+            limiter = float(limiter_ovr)
+
         # Texture: if user didn't set explicit texture controls, let conditioning gently enable it.
         texture_preset = str(args.texture_preset)
         texture_amount = float(args.texture_amount)
@@ -771,10 +837,10 @@ def main(argv: list[str] | None = None) -> int:
             random_seed=(int(post_seed) if post_seed is not None else None),
             prompt_hint=(str(prompt_hint) if prompt_hint else None),
             compressor_threshold_db=(float(comp_thr) if comp_thr is not None else None),
-            compressor_ratio=(4.0 if args.polish else 4.0),
+            compressor_ratio=float(comp_ratio_ovr) if comp_ratio_ovr is not None else (4.0 if args.polish else 4.0),
             compressor_attack_ms=float(getattr(args, "compressor_attack_ms", 5.0) if getattr(args, "compressor_attack_ms", None) is not None else (5.0 if args.polish else 5.0)),
             compressor_release_ms=float(getattr(args, "compressor_release_ms", 90.0) if getattr(args, "compressor_release_ms", None) is not None else (90.0 if args.polish else 80.0)),
-            compressor_makeup_db=float(comp_makeup),
+            compressor_makeup_db=float(comp_makeup_ovr) if comp_makeup_ovr is not None else float(comp_makeup),
             limiter_ceiling_db=(float(limiter) if limiter is not None else None),
             loop_clean=bool(getattr(args, "loop", False)),
             loop_crossfade_ms=int(getattr(args, "loop_crossfade_ms", 100)),
@@ -787,6 +853,9 @@ def main(argv: list[str] | None = None) -> int:
             duck_bed_release_ms=float(getattr(args, "duck_bed_release_ms", 120.0)),
             post_stack=(str(args.post_stack) if getattr(args, "post_stack", None) else None),
             compressor_follower_mode=str(getattr(args, "compressor_follower_mode", "peak")),
+
+            noise_bed_db=(float(args.noise_bed_db) if getattr(args, "noise_bed_db", None) is not None else None),
+            noise_bed_seed=(int(args.noise_bed_seed) if getattr(args, "noise_bed_seed", None) is not None else None),
         )
 
     def _qa_info(audio: np.ndarray, sr: int) -> str:

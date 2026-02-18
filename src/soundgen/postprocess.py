@@ -56,6 +56,10 @@ class PostProcessParams:
     texture_grain_ms: float = 22.0
     texture_spray: float = 0.55
 
+    # Simple noise bed (off by default). dBFS value, e.g. -40.
+    noise_bed_db: Optional[float] = None
+    noise_bed_seed: Optional[int] = None
+
     # Synthetic convolution reverb (off by default)
     reverb_preset: str = "off"  # off|room|cave|forest|nether
     reverb_mix: float = 0.0  # 0..1
@@ -670,6 +674,7 @@ _DEFAULT_POST_STACK: tuple[str, ...] = (
     "multiband",
     "formant",
     "texture",
+    "noise_bed",
     "transient",
     "exciter",
     "duck_bed",
@@ -681,6 +686,32 @@ _DEFAULT_POST_STACK: tuple[str, ...] = (
     "limiter",
     "final_clip",
 )
+
+
+def _apply_noise_bed(x: np.ndarray, sr: int, params: PostProcessParams) -> np.ndarray:
+    db = getattr(params, "noise_bed_db", None)
+    if db is None:
+        return x.astype(np.float32, copy=False)
+    level_db = float(db)
+    if x.size == 0:
+        return x.astype(np.float32, copy=False)
+
+    # Deterministic by default: tie to explicit noise seed, else post random_seed, else 0.
+    seed = getattr(params, "noise_bed_seed", None)
+    if seed is None:
+        seed = getattr(params, "random_seed", None)
+    seed_i = int(seed) if seed is not None else 0
+
+    rng = np.random.default_rng(seed_i)
+    noise = rng.standard_normal(x.size).astype(np.float32)
+
+    # Band-limit a bit to avoid excessive hiss (very cheap 1-pole-ish via butter).
+    noise = _butter_filter(noise, sr, kind="highpass", cutoff_hz=20.0)
+    noise = _butter_filter(noise, sr, kind="lowpass", cutoff_hz=min(12000.0, 0.48 * float(sr)))
+
+    amp = _db_to_amp(level_db)
+    y = (x.astype(np.float32, copy=False) + (noise * amp)).astype(np.float32, copy=False)
+    return y
 
 
 def _parse_post_stack(stack: str | None) -> tuple[str, ...]:
@@ -828,6 +859,9 @@ def post_process_audio(x: np.ndarray, sr: int, params: PostProcessParams) -> tup
 
         elif block == "texture":
             y = _apply_texture_overlay(y, sr, params, prompt_hint=(params.prompt_hint or None))
+
+        elif block == "noise_bed":
+            y = _apply_noise_bed(y, sr, params)
 
         elif block == "transient":
             if float(params.transient_amount) != 0.0 or float(getattr(params, "transient_sustain", 0.0)) != 0.0:
