@@ -20,6 +20,7 @@ from .postprocess import PostProcessParams, post_process_audio
 from .qa import compute_metrics
 from .qa_viz import spectrogram_image, waveform_image
 from .rfxgen_backend import SUPPORTED_PRESETS
+from .ui_models import Variant, normalize_variants_state
 
 
 def _rms_dbfs(rms: float) -> float:
@@ -41,15 +42,16 @@ def _variant_id(i: int) -> str:
 
 def _rows_from_variants(variants: list[dict[str, Any]]) -> list[list[object]]:
     rows: list[list[object]] = []
-    for v in variants:
+    for v in normalize_variants_state(variants):
+        vv = Variant.from_dict(v)
         rows.append(
             [
-                bool(v.get("select", False)),
-                str(v.get("id", "")),
-                float(v.get("seconds", 0.0)),
-                _fmt_db(float(v.get("rms_dbfs", float("-inf")))),
-                int(v.get("seed")) if v.get("seed") is not None else None,
-                bool(v.get("locked", False)),
+                bool(vv.select),
+                str(vv.id),
+                float(vv.seconds),
+                _fmt_db(float(vv.rms_dbfs)),
+                int(vv.seed) if vv.seed is not None else None,
+                bool(vv.locked),
             ]
         )
     return rows
@@ -58,7 +60,8 @@ def _rows_from_variants(variants: list[dict[str, Any]]) -> list[list[object]]:
 def _variants_from_df(rows: list[list[object]] | None, prev: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return prev
-    by_id = {str(v.get("id")): v for v in (prev or []) if isinstance(v, dict) and v.get("id") is not None}
+    prev_norm = normalize_variants_state(prev)
+    by_id = {str(v.get("id")): v for v in prev_norm if isinstance(v, dict) and v.get("id") is not None}
     out: list[dict[str, Any]] = []
     for r in rows:
         if not isinstance(r, list) or len(r) < 6:
@@ -70,7 +73,7 @@ def _variants_from_df(rows: list[list[object]] | None, prev: list[dict[str, Any]
         base["select"] = bool(r[0])
         base["locked"] = bool(r[5])
         out.append(base)
-    return out
+    return normalize_variants_state(out)
 
 
 def _safe_item_key(item_id: str) -> str:
@@ -340,19 +343,20 @@ def _run_generate_variants(
         a, sr = read_wav_mono(Path(res.wav_path))
         m = compute_metrics(a, int(sr))
         out.append(
-            {
-                "id": vid,
-                "seed": seed_i,
-                "seconds": float(m.seconds),
-                "rms_dbfs": _rms_dbfs(float(m.rms)),
-                "locked": False,
-                "select": False,
-                "wav_path": str(res.wav_path),
-                "edited_wav_path": None,
-            }
+            Variant(
+                id=vid,
+                seed=seed_i,
+                seconds=float(m.seconds),
+                rms_dbfs=_rms_dbfs(float(m.rms)),
+                locked=False,
+                select=False,
+                wav_path=str(res.wav_path),
+                edited_wav_path=None,
+                meta={},
+            ).to_dict()
         )
 
-    return out
+    return normalize_variants_state(out)
 
 
 def _ui_generate_variants(
