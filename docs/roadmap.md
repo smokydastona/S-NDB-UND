@@ -89,6 +89,14 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
     - **Markers**: mark transients, loop points, “good takes”.
     - **Playback**: play from cursor, play selection, loop selection.
     - **Export**: overwrite, “save as new variation” (auto suffix: `_edit1`, `_trim`, `_loopfix`, …).
+
+  **Editor repo takeaways (applied, scope-safe)**
+  - **Mode split (Zoom vs Selection)**: copy the explicit mode toggle idea (zoom-only interactions vs selection/edit interactions) to reduce accidental edits and simplify gestures (from Web-Audio-Editor).
+  - **“Leave” / isolate selection**: keep a single destructive operation that retains only the selection and discards the rest (from Web-Audio-Editor).
+  - **Undo/redo as a first-class requirement**: treat multi-step undo/redo as non-negotiable for destructive workflows (from Treble).
+  - **Reverse / repeat / append**: useful v2 destructive ops for SFX iteration (reverse for whooshes; repeat for rattles; append with optional fixed gap for compound stingers) (from Treble).
+  - **Pitch change**: add pitch shift as a v2 offline transform (distinct from playback-rate preview) for “variants without regen” workflows (from Sound-Editor).
+  - **Simple export configuration**: keep export as “one-click” with a small set of settings surfaced (format, sample rate, loudness target) rather than a deep dialog (inspired by AudioEditorKit).
   - **Kira-inspired realtime preview layer (editor playback)**
     - Inspiration: https://github.com/tesselode/kira (tweens, mixer tracks + FX, clocks, spatial audio).
     - **Backend-agnostic playback engine**: abstract a small `AudioManager`-like layer so editor playback isn’t tied to one library.
