@@ -16,6 +16,7 @@ if ($Clean) {
 # Install build-time tooling only (kept out of requirements.txt)
 python -m pip install --upgrade pip | Out-Null
 python -m pip install pyinstaller | Out-Null
+python -m pip install pillow | Out-Null
 
 # Ensure runtime deps are present (uses requirements.txt)
 python -m pip install -r requirements.txt | Out-Null
@@ -38,6 +39,17 @@ $commonArgs = @(
   "--onedir",
   "--paths", "src"
 )
+
+# Optional app icon (Windows): PyInstaller expects .ico
+$iconPng = ".examples/icon.png"
+$iconIco = Join-Path $WorkDir "app.ico"
+if (Test-Path $iconPng) {
+  if (!(Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
+  python -c "from PIL import Image; import os; p=r'$iconPng'; o=r'$iconIco'; im=Image.open(p); im.save(o, sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
+  if (Test-Path $iconIco) {
+    $commonArgs += @("--icon", $iconIco)
+  }
+}
 
 $commonCollect = @(
   "--collect-all", "soundgen",
