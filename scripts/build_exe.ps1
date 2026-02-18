@@ -58,6 +58,7 @@ $commonCollect = @(
   "--collect-all", "soundfile",
   "--collect-all", "gradio",
   "--collect-all", "safehttpx",
+  "--collect-all", "groovy",
   "--collect-all", "webview",
   "--collect-all", "torch",
   "--collect-all", "diffusers",
