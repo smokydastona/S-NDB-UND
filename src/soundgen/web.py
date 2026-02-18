@@ -17,6 +17,7 @@ from .qa_viz import spectrogram_image, waveform_image
 from .controls import map_prompt_to_controls
 from .pro_presets import PRO_PRESETS, get_pro_preset, pro_preset_keys, pro_preset_recommended_profile
 from .polish_profiles import POLISH_PROFILES, polish_profile_keys
+from .fx_chains import FX_CHAINS, fx_chain_keys, load_fx_chain_json
 
 
 def _generate(
@@ -182,6 +183,10 @@ def _generate(
     post_stack: str,
     compressor_follower_mode: str,
     layered_xfade_curve: str,
+
+    # FX chains (v1)
+    fx_chain: str,
+    fx_chain_json: object,
 ) -> tuple[str, str, str, object, object]:
     def _maybe(s: str) -> str | None:
         t = str(s or "").strip()
@@ -216,6 +221,47 @@ def _generate(
                 if p.exists() and p.suffix.lower() == ".zip":
                     out.append(p)
         return tuple(out)
+
+    def _as_optional_path(v: object) -> Path | None:
+        if v is None:
+            return None
+        if isinstance(v, (str, Path)):
+            p = Path(str(v))
+            return p if p.exists() else None
+        name = getattr(v, "name", None)
+        if name:
+            p = Path(str(name))
+            return p if p.exists() else None
+        if isinstance(v, dict) and v.get("name"):
+            p = Path(str(v["name"]))
+            return p if p.exists() else None
+        return None
+
+    def _load_fx_patch() -> tuple[dict[str, object], bool, bool]:
+        key = str(fx_chain or "off").strip().lower()
+        patch: dict[str, object] = {}
+        enable_post = False
+        enable_polish = False
+
+        if key and key != "off":
+            obj = FX_CHAINS.get(key)
+            if obj is not None:
+                patch.update(dict(obj.args or {}))
+                enable_post = bool(obj.enable_post)
+                enable_polish = bool(obj.enable_polish)
+
+        jp = _as_optional_path(fx_chain_json)
+        if jp is not None:
+            p2, ep, epl = load_fx_chain_json(jp)
+            patch.update(dict(p2 or {}))
+            enable_post = bool(enable_post or ep)
+            enable_polish = bool(enable_polish or epl)
+
+        return patch, enable_post, enable_polish
+
+    fx_patch, fx_enable_post, fx_enable_polish = _load_fx_patch()
+    post_on = bool(post or fx_enable_post or bool(fx_patch))
+    polish_on = bool(polish or fx_enable_polish)
 
     def _infer_out_format() -> str:
         fmt = (out_format or "wav").strip().lower()
@@ -456,7 +502,7 @@ def _generate(
         comp_makeup = 0.0
         limiter = None
 
-        if polish:
+        if polish_on:
             denoise = 0.25
             trans = 0.25
             comp_thr = -18.0
@@ -537,6 +583,7 @@ def _generate(
             compressor_follower_mode=str(compressor_follower_mode or "peak"),
             exciter_amount=float(exc),
         )
+
         if hints is not None:
             # Apply only the hints we support for post-processing.
             if hints.loudness_rms_db is not None:
@@ -547,7 +594,7 @@ def _generate(
                 params = replace(params, lowpass_hz=float(hints.lowpass_hz))
 
         # Polish mode DSP (conservative defaults)
-        if polish:
+        if polish_on:
             atk = float(compressor_attack_ms) if compressor_attack_ms is not None else 5.0
             rel = float(compressor_release_ms) if compressor_release_ms is not None else 90.0
             params = replace(
@@ -559,6 +606,53 @@ def _generate(
                 compressor_makeup_db=max(float(params.compressor_makeup_db), 3.0),
                 limiter_ceiling_db=-1.0,
             )
+
+        # Apply FX chain patch last (explicit user selection in UI).
+        if fx_patch:
+            mapped: dict[str, object] = {}
+            for k, v in fx_patch.items():
+                kk = str(k)
+                if kk == "reverb":
+                    mapped["reverb_preset"] = v
+                elif kk == "reverb_time":
+                    mapped["reverb_time_s"] = v
+                elif kk == "mb_low_hz":
+                    mapped["multiband_low_hz"] = v
+                elif kk == "mb_high_hz":
+                    mapped["multiband_high_hz"] = v
+                elif kk == "mb_low_gain_db":
+                    mapped["multiband_low_gain_db"] = v
+                elif kk == "mb_mid_gain_db":
+                    mapped["multiband_mid_gain_db"] = v
+                elif kk == "mb_high_gain_db":
+                    mapped["multiband_high_gain_db"] = v
+                elif kk == "mb_comp_threshold_db":
+                    mapped["multiband_comp_threshold_db"] = v
+                elif kk == "mb_comp_ratio":
+                    mapped["multiband_comp_ratio"] = v
+                elif kk == "no_trim":
+                    mapped["trim_silence"] = (not bool(v))
+                else:
+                    mapped[kk] = v
+
+            replace_kwargs: dict[str, object] = {}
+            for kk, vv in mapped.items():
+                if not hasattr(params, kk):
+                    continue
+                if kk in {"prompt_hint", "random_seed"}:
+                    continue
+                replace_kwargs[kk] = vv
+            if replace_kwargs:
+                params = replace(params, **replace_kwargs)
+
+        return params
+        # If a chain requested post/polish enablement, honor it at runtime (so selecting a chain works
+        # even if the user forgot to toggle post on).
+        if patch:
+            # Note: we avoid mutating function args directly; _postprocess_fn checks (post or polish)
+            # captured from the outer scope, so we only use this to set params. The UI toggles still
+            # control whether post-processing runs.
+            pass
         return params
     def _qa_info(audio: np.ndarray, sr: int) -> str:
         m = compute_metrics(audio, sr)
@@ -571,7 +665,7 @@ def _generate(
         return f"qa: {m.seconds:.2f}s @ {m.sample_rate}Hz peak={m.peak:.3f} rms={m.rms:.3f}{flag_s}".strip()
 
     def _postprocess_fn(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
-        if not (post or polish):
+        if not (post_on or polish_on):
             return audio, _qa_info(audio, sr)
         pp = _pp_params()
         # Tie stochastic DSP to the current variant seed.
@@ -854,6 +948,8 @@ def _generate(
         credits["post_stack"] = (str(post_stack).strip() if str(post_stack or "").strip() else None)
         credits["compressor_follower_mode"] = str(compressor_follower_mode or "peak")
         credits["layered_xfade_curve_shape"] = str(layered_xfade_curve or "linear")
+        credits["fx_chain"] = str(fx_chain or "off")
+        credits["fx_chain_json"] = (str(_as_optional_path(fx_chain_json)) if _as_optional_path(fx_chain_json) is not None else None)
         if generated.sources:
             credits["sources"] = list(generated.sources)
 
@@ -1234,6 +1330,10 @@ def build_demo() -> gr.Blocks:
                 label="Loop crossfade curve",
             )
 
+        with gr.Accordion("FX chain (v1)", open=False):
+            fx_chain = gr.Dropdown(["off", *fx_chain_keys()], value="off", label="fx chain")
+            fx_chain_json = gr.File(label="fx chain JSON (optional)", file_types=[".json"])
+
         with gr.Accordion("Advanced post (3.5)", open=False):
             compressor_follower_mode = gr.Dropdown(
                 ["peak", "rms"],
@@ -1481,6 +1581,9 @@ def build_demo() -> gr.Blocks:
                 post_stack,
                 compressor_follower_mode,
                 layered_xfade_curve,
+
+                fx_chain,
+                fx_chain_json,
             ],
             outputs=[out_file, playsound_cmd, info, wave, spec],
         )
