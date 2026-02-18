@@ -174,6 +174,54 @@ def _one_pole_lowpass(x: np.ndarray, *, sr: int, cutoff_hz: float) -> np.ndarray
     return y
 
 
+def _one_pole_highpass(x: np.ndarray, *, sr: int, cutoff_hz: float) -> np.ndarray:
+    """Cheap highpass: x - LP(x). Good enough for per-layer shaping."""
+
+    if x.size == 0:
+        return x.astype(np.float32, copy=False)
+    lp = _one_pole_lowpass(x.astype(np.float32, copy=False), sr=sr, cutoff_hz=float(cutoff_hz))
+    return (x.astype(np.float32, copy=False) - lp).astype(np.float32, copy=False)
+
+
+def _db_to_gain(db: float) -> float:
+    return float(10.0 ** (float(db) / 20.0))
+
+
+def _apply_layer_fx(
+    x: np.ndarray,
+    *,
+    sr: int,
+    hp_hz: float,
+    lp_hz: float,
+    drive: float,
+    gain_db: float,
+) -> np.ndarray:
+    """Small per-layer parallel FX chain.
+
+    Intentionally light-weight (no scipy): optional HP/LP, soft clip drive, gain.
+    """
+
+    y = x.astype(np.float32, copy=False)
+
+    hp = float(hp_hz)
+    if hp > 10.0:
+        y = _one_pole_highpass(y, sr=sr, cutoff_hz=hp)
+
+    lp = float(lp_hz)
+    if lp > 10.0:
+        y = _one_pole_lowpass(y, sr=sr, cutoff_hz=lp)
+
+    d = float(np.clip(float(drive), 0.0, 1.0))
+    if d > 1e-6:
+        y = _soft_clip(y, drive=d)
+
+    gdb = float(gain_db)
+    if abs(gdb) > 1e-6:
+        y = (y * _db_to_gain(gdb)).astype(np.float32, copy=False)
+
+    return np.clip(y, -1.0, 1.0).astype(np.float32, copy=False)
+
+
 def _apply_spectral_tilt(
     x: np.ndarray,
     *,
@@ -365,6 +413,11 @@ class LayeredParams:
     transient_ms: int = 110
     tail_ms: int = 350
 
+    # Controlled crossfades between layers (optional).
+    # 0 disables and preserves the legacy "just add layers" behavior.
+    xfade_transient_to_body_ms: float = 0.0
+    xfade_body_to_tail_ms: float = 0.0
+
     # layer gains
     transient_gain: float = 0.90
     body_gain: float = 0.55
@@ -397,6 +450,22 @@ class LayeredParams:
     transient_tilt: float = 0.0
     body_tilt: float = 0.0
     tail_tilt: float = 0.0
+
+    # Parallel per-layer FX (optional). 0 disables.
+    transient_hp_hz: float = 0.0
+    transient_lp_hz: float = 0.0
+    transient_drive: float = 0.0
+    transient_gain_db: float = 0.0
+
+    body_hp_hz: float = 0.0
+    body_lp_hz: float = 0.0
+    body_drive: float = 0.0
+    body_gain_db: float = 0.0
+
+    tail_hp_hz: float = 0.0
+    tail_lp_hz: float = 0.0
+    tail_drive: float = 0.0
+    tail_gain_db: float = 0.0
 
     # layer interaction: transient ducks body
     duck_amount: float = 0.35
@@ -627,7 +696,10 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
     transient_n = min(n, max(1, int(sr * (int(params.transient_ms) / 1000.0))))
     tail_n = min(n, max(1, int(sr * (int(params.tail_ms) / 1000.0))))
 
+    # Full-length layer buffers (post-envelope, pre-sum) so we can crossfade + apply per-layer FX.
     transient_full = np.zeros(n, dtype=np.float32)
+    body_full = np.zeros(n, dtype=np.float32)
+    tail_full = np.zeros(n, dtype=np.float32)
 
     # Transient + tail from samplelib (if any zips provided)
     # Apply micro-variation after preset/curve choices.
@@ -679,8 +751,17 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
             # Tilt transient identity
             t_audio = _apply_spectral_tilt(t_audio, sr=sr, tilt=float(params.transient_tilt), cutoff_hz=1800.0)
 
+            # Optional per-layer FX
+            t_audio = _apply_layer_fx(
+                t_audio,
+                sr=sr,
+                hp_hz=float(params.transient_hp_hz),
+                lp_hz=float(params.transient_lp_hz),
+                drive=float(params.transient_drive),
+                gain_db=float(params.transient_gain_db),
+            )
+
             transient_full[: t_audio.size] = float(params.transient_gain) * t_audio
-            x[: t_audio.size] += transient_full[: t_audio.size]
             for s in t_res.sources:
                 sources.append(
                     {
@@ -730,8 +811,18 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
             # Tilt tail emotion/space
             tail_audio = _apply_spectral_tilt(tail_audio, sr=sr, tilt=float(params.tail_tilt), cutoff_hz=2400.0)
 
+            # Optional per-layer FX
+            tail_audio = _apply_layer_fx(
+                tail_audio,
+                sr=sr,
+                hp_hz=float(params.tail_hp_hz),
+                lp_hz=float(params.tail_lp_hz),
+                drive=float(params.tail_drive),
+                gain_db=float(params.tail_gain_db),
+            )
+
             start = max(0, n - tail_audio.size)
-            x[start : start + tail_audio.size] += float(params.tail_gain) * tail_audio
+            tail_full[start : start + tail_audio.size] = float(params.tail_gain) * tail_audio
             for s in tail_res.sources:
                 sources.append(
                     {
@@ -812,6 +903,16 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
     # Tilt body character
     body = _apply_spectral_tilt(body, sr=sr, tilt=float(params.body_tilt), cutoff_hz=1600.0)
 
+    # Optional per-layer FX
+    body = _apply_layer_fx(
+        body,
+        sr=sr,
+        hp_hz=float(params.body_hp_hz),
+        lp_hz=float(params.body_lp_hz),
+        drive=float(params.body_drive),
+        gain_db=float(params.body_gain_db),
+    )
+
     # Interaction rule: transient ducks body.
     duck_gain = _sidechain_duck_gain(
         transient_full,
@@ -821,7 +922,29 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
     )
     body = (body * duck_gain[: body.size]).astype(np.float32, copy=False)
 
-    x[: body.size] += float(params.body_gain) * body
+    body_full[: body.size] = float(params.body_gain) * body
+
+    # Controlled crossfades (optional): shape overlap windows.
+    tb_n = _ms_to_n(float(params.xfade_transient_to_body_ms), sr)
+    if tb_n > 1:
+        tb_n = min(tb_n, n)
+        # Fade transient down while body comes up.
+        transient_full[:tb_n] *= np.linspace(1.0, 0.0, tb_n, dtype=np.float32)
+        body_full[:tb_n] *= np.linspace(0.0, 1.0, tb_n, dtype=np.float32)
+
+    bt_n = _ms_to_n(float(params.xfade_body_to_tail_ms), sr)
+    if bt_n > 1 and tail_full.any():
+        start = int(np.argmax(np.abs(tail_full) > 0.0))
+        if start <= 0:
+            start = max(0, n - tail_n)
+        bt_n = min(bt_n, n - start)
+        if bt_n > 1:
+            # Fade body out as tail comes in.
+            body_full[start : start + bt_n] *= np.linspace(1.0, 0.0, bt_n, dtype=np.float32)
+            body_full[start + bt_n :] *= 0.0
+            tail_full[start : start + bt_n] *= np.linspace(0.0, 1.0, bt_n, dtype=np.float32)
+
+    x = (transient_full + body_full + tail_full).astype(np.float32, copy=False)
 
     # Slight glue: soft clip then normalize peak
     x = _soft_clip(x, drive=0.10)
@@ -844,6 +967,10 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
             },
             "transient_ms": int(params.transient_ms),
             "tail_ms": int(params.tail_ms),
+            "xfade_ms": {
+                "transient_to_body": float(params.xfade_transient_to_body_ms),
+                "body_to_tail": float(params.xfade_body_to_tail_ms),
+            },
             "gains": {
                 "transient": float(params.transient_gain),
                 "body": float(params.body_gain),
@@ -871,6 +998,26 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
                 "transient": float(params.transient_tilt),
                 "body": float(params.body_tilt),
                 "tail": float(params.tail_tilt),
+            },
+            "layer_fx": {
+                "transient": {
+                    "hp_hz": float(params.transient_hp_hz),
+                    "lp_hz": float(params.transient_lp_hz),
+                    "drive": float(params.transient_drive),
+                    "gain_db": float(params.transient_gain_db),
+                },
+                "body": {
+                    "hp_hz": float(params.body_hp_hz),
+                    "lp_hz": float(params.body_lp_hz),
+                    "drive": float(params.body_drive),
+                    "gain_db": float(params.body_gain_db),
+                },
+                "tail": {
+                    "hp_hz": float(params.tail_hp_hz),
+                    "lp_hz": float(params.tail_lp_hz),
+                    "drive": float(params.tail_drive),
+                    "gain_db": float(params.tail_gain_db),
+                },
             },
             "interaction": {
                 "duck_amount": float(params.duck_amount),

@@ -448,6 +448,16 @@ Curve shapes + spectral tilt + family micro-variation:
 python -m soundgen.generate --engine layered --minecraft --namespace mymod --event ui.hit --variants 3 --seed 123 --layered-family --layered-micro-variation 0.35 --layered-curve exponential --layered-transient-tilt 0.3 --layered-body-tilt -0.2 --layered-tail-tilt 0.6 --prompt "melee hit"
 ```
 
+Crossfades + per-layer FX (advanced):
+
+```powershell
+# Smooth blends between layers (0 disables)
+python -m soundgen.generate --engine layered --layered-xfade-transient-to-body-ms 20 --layered-xfade-body-to-tail-ms 45 --prompt "coin pickup" --seconds 1.2 --out outputs\coin_xfade.wav
+
+# Sculpt layers (HP/LP/drive/gain are optional; 0 disables)
+python -m soundgen.generate --engine layered --layered-transient-hp-hz 120 --layered-body-lp-hz 6500 --layered-tail-drive 0.25 --layered-tail-gain-db 3 --prompt "creature hiss" --seconds 1.6 --post --out outputs\hiss_fx.wav
+```
+
 Source lock (pin transient/tail samples across variants):
 
 ```powershell

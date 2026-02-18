@@ -475,6 +475,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--layered-tail-tilt", type=float, default=0.0, help="Tail spectral tilt (-1..+1)")
 
     p.add_argument(
+        "--layered-xfade-transient-to-body-ms",
+        type=float,
+        default=0.0,
+        help="Layered: crossfade transient→body (ms). 0 disables (legacy add-layers).",
+    )
+    p.add_argument(
+        "--layered-xfade-body-to-tail-ms",
+        type=float,
+        default=0.0,
+        help="Layered: crossfade body→tail (ms). 0 disables (legacy add-layers).",
+    )
+
+    # Layered per-layer FX (optional). 0 disables.
+    p.add_argument("--layered-transient-hp-hz", type=float, default=0.0, help="Layered transient HPF (Hz)")
+    p.add_argument("--layered-transient-lp-hz", type=float, default=0.0, help="Layered transient LPF (Hz)")
+    p.add_argument("--layered-transient-drive", type=float, default=0.0, help="Layered transient drive (0..1)")
+    p.add_argument("--layered-transient-gain-db", type=float, default=0.0, help="Layered transient gain (dB)")
+
+    p.add_argument("--layered-body-hp-hz", type=float, default=0.0, help="Layered body HPF (Hz)")
+    p.add_argument("--layered-body-lp-hz", type=float, default=0.0, help="Layered body LPF (Hz)")
+    p.add_argument("--layered-body-drive", type=float, default=0.0, help="Layered body drive (0..1)")
+    p.add_argument("--layered-body-gain-db", type=float, default=0.0, help="Layered body gain (dB)")
+
+    p.add_argument("--layered-tail-hp-hz", type=float, default=0.0, help="Layered tail HPF (Hz)")
+    p.add_argument("--layered-tail-lp-hz", type=float, default=0.0, help="Layered tail LPF (Hz)")
+    p.add_argument("--layered-tail-drive", type=float, default=0.0, help="Layered tail drive (0..1)")
+    p.add_argument("--layered-tail-gain-db", type=float, default=0.0, help="Layered tail gain (dB)")
+
+    p.add_argument(
         "--layered-family",
         action="store_true",
         help="Family mode: keep --seed as the family seed across variants and apply micro-variation per variant.",
@@ -935,6 +964,20 @@ def main(argv: list[str] | None = None) -> int:
             layered_transient_tilt=float(args.layered_transient_tilt),
             layered_body_tilt=float(args.layered_body_tilt),
             layered_tail_tilt=float(args.layered_tail_tilt),
+            layered_xfade_transient_to_body_ms=float(args.layered_xfade_transient_to_body_ms),
+            layered_xfade_body_to_tail_ms=float(args.layered_xfade_body_to_tail_ms),
+            layered_transient_hp_hz=float(args.layered_transient_hp_hz),
+            layered_transient_lp_hz=float(args.layered_transient_lp_hz),
+            layered_transient_drive=float(args.layered_transient_drive),
+            layered_transient_gain_db=float(args.layered_transient_gain_db),
+            layered_body_hp_hz=float(args.layered_body_hp_hz),
+            layered_body_lp_hz=float(args.layered_body_lp_hz),
+            layered_body_drive=float(args.layered_body_drive),
+            layered_body_gain_db=float(args.layered_body_gain_db),
+            layered_tail_hp_hz=float(args.layered_tail_hp_hz),
+            layered_tail_lp_hz=float(args.layered_tail_lp_hz),
+            layered_tail_drive=float(args.layered_tail_drive),
+            layered_tail_gain_db=float(args.layered_tail_gain_db),
             layered_source_lock=bool(args.layered_source_lock),
             layered_source_seed=(int(source_seed) if source_seed is not None else None),
             layered_granular_preset=str(args.layered_granular_preset),

@@ -153,6 +153,24 @@ def _generate(
     layered_tail_hold_ms_adv: float | None,
     layered_tail_decay_ms_adv: float | None,
     layered_duck_release_ms_adv: float | None,
+
+    layered_xfade_transient_to_body_ms: float,
+    layered_xfade_body_to_tail_ms: float,
+
+    layered_transient_hp_hz: float,
+    layered_transient_lp_hz: float,
+    layered_transient_drive: float,
+    layered_transient_gain_db: float,
+
+    layered_body_hp_hz: float,
+    layered_body_lp_hz: float,
+    layered_body_drive: float,
+    layered_body_gain_db: float,
+
+    layered_tail_hp_hz: float,
+    layered_tail_lp_hz: float,
+    layered_tail_drive: float,
+    layered_tail_gain_db: float,
 ) -> tuple[str, str, str, object, object]:
     def _maybe(s: str) -> str | None:
         t = str(s or "").strip()
@@ -728,6 +746,20 @@ def _generate(
                 layered_transient_tilt=float(layered_transient_tilt),
                 layered_body_tilt=float(layered_body_tilt),
                 layered_tail_tilt=float(layered_tail_tilt),
+                layered_xfade_transient_to_body_ms=float(layered_xfade_transient_to_body_ms),
+                layered_xfade_body_to_tail_ms=float(layered_xfade_body_to_tail_ms),
+                layered_transient_hp_hz=float(layered_transient_hp_hz),
+                layered_transient_lp_hz=float(layered_transient_lp_hz),
+                layered_transient_drive=float(layered_transient_drive),
+                layered_transient_gain_db=float(layered_transient_gain_db),
+                layered_body_hp_hz=float(layered_body_hp_hz),
+                layered_body_lp_hz=float(layered_body_lp_hz),
+                layered_body_drive=float(layered_body_drive),
+                layered_body_gain_db=float(layered_body_gain_db),
+                layered_tail_hp_hz=float(layered_tail_hp_hz),
+                layered_tail_lp_hz=float(layered_tail_lp_hz),
+                layered_tail_drive=float(layered_tail_drive),
+                layered_tail_gain_db=float(layered_tail_gain_db),
                 layered_source_lock=bool(layered_source_lock),
                 layered_source_seed=(int(source_seed_i) if source_seed_i is not None else None),
                 layered_granular_preset=str(layered_granular_preset),
@@ -966,6 +998,41 @@ def build_demo() -> gr.Blocks:
                         layered_tail_decay_ms_adv = gr.Number(value=None, precision=1, label="tail decay (ms)")
                     layered_duck_release_ms_adv = gr.Number(value=None, precision=1, label="duck release (ms)")
 
+                with gr.Accordion("Layered (crossfades + per-layer FX)", open=False, visible=False) as layered_fx_acc:
+                    gr.Markdown("Crossfades (0 disables).")
+                    with gr.Row():
+                        layered_xfade_transient_to_body_ms = gr.Slider(
+                            0.0,
+                            120.0,
+                            value=0.0,
+                            step=1.0,
+                            label="xfade transient→body (ms)",
+                        )
+                        layered_xfade_body_to_tail_ms = gr.Slider(
+                            0.0,
+                            250.0,
+                            value=0.0,
+                            step=1.0,
+                            label="xfade body→tail (ms)",
+                        )
+
+                    gr.Markdown("Per-layer FX (0 disables HP/LP/drive; gain is dB).")
+                    with gr.Row():
+                        layered_transient_hp_hz = gr.Slider(0.0, 2000.0, value=0.0, step=10.0, label="transient HPF (Hz)")
+                        layered_transient_lp_hz = gr.Slider(0.0, 20000.0, value=0.0, step=50.0, label="transient LPF (Hz)")
+                        layered_transient_drive = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="transient drive")
+                        layered_transient_gain_db = gr.Slider(-24.0, 24.0, value=0.0, step=0.5, label="transient gain (dB)")
+                    with gr.Row():
+                        layered_body_hp_hz = gr.Slider(0.0, 2000.0, value=0.0, step=10.0, label="body HPF (Hz)")
+                        layered_body_lp_hz = gr.Slider(0.0, 20000.0, value=0.0, step=50.0, label="body LPF (Hz)")
+                        layered_body_drive = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="body drive")
+                        layered_body_gain_db = gr.Slider(-24.0, 24.0, value=0.0, step=0.5, label="body gain (dB)")
+                    with gr.Row():
+                        layered_tail_hp_hz = gr.Slider(0.0, 2000.0, value=0.0, step=10.0, label="tail HPF (Hz)")
+                        layered_tail_lp_hz = gr.Slider(0.0, 20000.0, value=0.0, step=50.0, label="tail LPF (Hz)")
+                        layered_tail_drive = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="tail drive")
+                        layered_tail_gain_db = gr.Slider(-24.0, 24.0, value=0.0, step=0.5, label="tail gain (dB)")
+
             layered_source_lock.change(
                 fn=lambda v: gr.update(visible=bool(v)),
                 inputs=[layered_source_lock],
@@ -1010,6 +1077,7 @@ def build_demo() -> gr.Blocks:
                     gr.update(visible=is_layered),
                     gr.update(visible=is_layered),
                     gr.update(visible=is_layered, open=is_layered),
+                    gr.update(visible=is_layered, open=False),
                 )
 
             engine.change(
@@ -1028,6 +1096,7 @@ def build_demo() -> gr.Blocks:
                     layered_col,
                     layered_tilt_row,
                     layered_adv_acc,
+                    layered_fx_acc,
                 ],
             )
 
@@ -1312,6 +1381,24 @@ def build_demo() -> gr.Blocks:
                 layered_tail_hold_ms_adv,
                 layered_tail_decay_ms_adv,
                 layered_duck_release_ms_adv,
+
+                layered_xfade_transient_to_body_ms,
+                layered_xfade_body_to_tail_ms,
+
+                layered_transient_hp_hz,
+                layered_transient_lp_hz,
+                layered_transient_drive,
+                layered_transient_gain_db,
+
+                layered_body_hp_hz,
+                layered_body_lp_hz,
+                layered_body_drive,
+                layered_body_gain_db,
+
+                layered_tail_hp_hz,
+                layered_tail_lp_hz,
+                layered_tail_drive,
+                layered_tail_gain_db,
             ],
             outputs=[out_file, playsound_cmd, info, wave, spec],
         )
