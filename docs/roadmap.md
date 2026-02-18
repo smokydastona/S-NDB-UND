@@ -2,6 +2,8 @@
 
 This doc maps the aspirational roadmap to what exists in the repo today, and what’s realistically next.
 
+For a tight definition of “one‑stop shop” (and a buildable MVP scope), see `docs/one_stop_shop.md`.
+
 Legend: **Done** / **In repo (basic)** / **Next** / **Later**
 
 ## Phase 1 — Core foundations (toward 1.0)
