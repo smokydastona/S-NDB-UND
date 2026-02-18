@@ -603,6 +603,8 @@ def _ui_export_bundle(
     mp3_bitrate: str,
     ogg_quality: int,
     filename_template: str,
+    project_json: dict[str, Any] | None,
+    rfxgen_preset: str,
 ) -> tuple[str, str]:
     want = str(mode or "selected").strip().lower()
     fmt = str(out_format or "wav").strip().lower()
@@ -628,6 +630,14 @@ def _ui_export_bundle(
 
     templ = str(filename_template or "{variant}_{seed}").strip() or "{variant}_{seed}"
 
+    proj_tok = ""
+    if isinstance(project_json, dict):
+        # Prefer stable id, fall back to title.
+        proj_tok = str(project_json.get("project_id") or project_json.get("title") or "").strip()
+    proj_tok = _safe_item_key(proj_tok) if proj_tok else ""
+
+    preset_tok = _safe_item_key(str(rfxgen_preset or "").strip()) if str(rfxgen_preset or "").strip() else ""
+
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for v in picks:
             vid = str(v.get("id") or "variant")
@@ -639,8 +649,8 @@ def _ui_export_bundle(
             name = templ
             name = name.replace("{variant}", vid)
             name = name.replace("{seed}", str(seed if seed is not None else ""))
-            name = name.replace("{project}", "")
-            name = name.replace("{preset}", "")
+            name = name.replace("{project}", proj_tok)
+            name = name.replace("{preset}", preset_tok)
             name = "_".join([p for p in name.replace("/", "_").replace("\\", "_").split("_") if p])
             if not name:
                 name = vid
@@ -919,7 +929,18 @@ def build_demo_control_panel() -> gr.Blocks:
 
         export_btn.click(
             fn=_ui_export_bundle,
-            inputs=[variants_state, ex_mode, ex_fmt, ex_sr, ex_wav_subtype, ex_mp3_bitrate, ex_ogg_quality, filename_template],
+            inputs=[
+                variants_state,
+                ex_mode,
+                ex_fmt,
+                ex_sr,
+                ex_wav_subtype,
+                ex_mp3_bitrate,
+                ex_ogg_quality,
+                filename_template,
+                pr_json,
+                rfxgen_preset,
+            ],
             outputs=[export_out, export_status],
         )
 
