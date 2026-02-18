@@ -2,7 +2,7 @@
 
 [![Build EXE](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml/badge.svg)](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-TBD-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 S-NDB-UND is an **open-source game-audio sound generator** for game developers, modders, and sound designers.
 It combines **AI prompt-to-audio**, **procedural / DSP engines**, and **post-processing + FX chains** to produce **game-ready SFX, ambience, and creature sounds** — with a CLI-first workflow and Minecraft-ready export.
@@ -248,7 +248,7 @@ See the full status + milestones in [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 
-License is **TBD** (no LICENSE file yet). If you want this to be broadly reusable, pick a license (MIT / Apache-2.0 are common) and add `LICENSE` — then the badge above can switch from `TBD` to the real license automatically.
+MIT licensed — see [LICENSE](LICENSE).
 
 ## One-stop shop (v1) vision
 
