@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib
 import inspect
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -12,6 +13,54 @@ from typing import Any, Callable, Iterable
 class PluginLoadReport:
     loaded_modules: tuple[str, ...]
     errors: tuple[str, ...]
+
+
+def _accepted_plugin_license_ids() -> set[str]:
+    raw = str(os.environ.get("SOUNDGEN_ACCEPT_PLUGIN_LICENSES") or "").strip()
+    if not raw:
+        return set()
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def _license_blocks_load(mod: Any) -> tuple[bool, str | None]:
+    """Return (blocked, message).
+
+    Plugins may optionally declare a module-level `SOUNDGEN_PLUGIN_LICENSE` dict.
+    If it sets `requires_acceptance=True`, we require explicit opt-in via the
+    `SOUNDGEN_ACCEPT_PLUGIN_LICENSES` environment variable.
+
+    This is intentionally lightweight and best-effort: it doesn't try to
+    interpret licenses, only makes acknowledgement explicit.
+    """
+
+    lic = getattr(mod, "SOUNDGEN_PLUGIN_LICENSE", None)
+    if not isinstance(lic, dict):
+        return False, None
+
+    requires = bool(lic.get("requires_acceptance"))
+    if not requires:
+        return False, None
+
+    lic_id = str(lic.get("id") or "").strip()
+    if not lic_id:
+        return True, "plugin declares requires_acceptance but has no SOUNDGEN_PLUGIN_LICENSE['id']"
+
+    accepted = _accepted_plugin_license_ids()
+    if lic_id in accepted:
+        return False, None
+
+    name = str(lic.get("name") or lic_id).strip()
+    url = str(lic.get("url") or "").strip()
+    notice = str(lic.get("notice") or "").strip()
+    msg = (
+        f"plugin license acceptance required for '{name}' (id='{lic_id}'). "
+        f"Set SOUNDGEN_ACCEPT_PLUGIN_LICENSES={lic_id} to load this plugin."
+    )
+    if url:
+        msg += f" License URL: {url}"
+    if notice:
+        msg += f" Notice: {notice}"
+    return True, msg
 
 
 def _iter_local_plugin_module_names(search_roots: Iterable[Path]) -> list[str]:
@@ -139,6 +188,10 @@ def load_engine_plugins(*, register_engine: Callable[[str, Any], None]) -> Plugi
     for mod_name in module_names:
         try:
             mod = importlib.import_module(mod_name)
+            blocked, msg = _license_blocks_load(mod)
+            if blocked:
+                errors.append(f"{mod_name}: {msg or 'plugin blocked by license gate'}")
+                continue
             _call_register_hook(mod, register_engine=register_engine)
             loaded.append(mod_name)
         except Exception as e:

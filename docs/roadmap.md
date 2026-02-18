@@ -51,11 +51,11 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
   - Gradio Web UI + desktop wrapper exist and cover controls.
   - If you still want Electron/Qt, that’s a separate “productization” milestone.
 
-- **3.2 Fine‑tuning support** — **Done (practical), Next (training recipes)**
+- **3.2 Fine‑tuning support** — **Done**
   - Dataset export tool exists: `python -m soundgen.creature_finetune prepare …`
   - Inference-time LoRA loading exists for `stable_audio_open` (creature families).
-  - Next step: provide training recipes for one or two popular stacks (diffusers+accelerate recommended).
-  - Also: add a license-aware “engine plugin” guide (many state-of-the-art weights are non-commercial).
+  - Training recipe docs: `docs/creature_family_training_windows.md`.
+  - License-aware plugin guidance: `docs/plugins.md` + optional loader gate via `SOUNDGEN_ACCEPT_PLUGIN_LICENSES`.
 
 - **3.3 Multi‑engine blending** — **Done (layered v1)**
   - `layered` mixes samplelib transient/tail with synth body.

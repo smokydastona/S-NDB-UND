@@ -66,3 +66,34 @@ This repo’s loader will `ep.load()` and call the register hook.
 
 - Plugin discovery is best-effort. If a plugin fails to import, core engines still work.
 - Keep plugin imports light if you care about `--help` startup time.
+
+## License-aware plugins (non-commercial weights, gated models)
+
+Many state-of-the-art audio model weights are **non-commercial**, **gated**, or require accepting terms.
+This repo can’t enforce legal compliance for you, but it can help make the licensing surface area explicit.
+
+### How to declare a license notice in a plugin
+
+If your plugin wraps model weights with special terms, define a module-level dict:
+
+```python
+SOUNDGEN_PLUGIN_LICENSE = {
+  "id": "myengine-nc-2026",
+  "name": "MyEngine Model Weights (Non-Commercial)",
+  "url": "https://example.com/license",
+  "notice": "Non-commercial use only. See license URL for terms.",
+  "requires_acceptance": True,
+}
+```
+
+If `requires_acceptance` is `True`, the plugin will only load when the user explicitly opts in by setting:
+
+- `SOUNDGEN_ACCEPT_PLUGIN_LICENSES=myengine-nc-2026`
+
+You can list multiple accepted license ids separated by commas.
+
+### Recommendation
+
+- Treat weight licenses separately from code licenses.
+- Always include a clear `notice` and `url`.
+- For gated models (Hugging Face), mention the exact model id and the “accept terms” step in the plugin README.
