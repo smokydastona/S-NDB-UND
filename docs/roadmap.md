@@ -61,9 +61,9 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later**
   - `layered` mixes samplelib transient/tail with synth body.
   - Added: controlled crossfades (transient→body, body→tail) and optional per-layer FX (HP/LP/drive/gain).
 
-- **3.4 Looping + ambience tools** — **In repo (basic), Next (loop suite)**
+- **3.4 Looping + ambience tools** — **Done**
   - Loop-clean + crossfade exists.
-  - Next: “loop suite” commands (auto-loop points, tail trimming heuristics, noise bed helpers).
+  - Loop suite commands implemented: `python -m soundgen.loop_suite` (auto loop points, tail trim heuristics, noise bed helpers) and `S-NDB-UND.exe loop ...`.
 
 - **3.5 Editor-grade DSP + analysis (Audacity/Ardour inspired)** — **Done**
   - Export analysis report (stored in credits / best-of-N selection).

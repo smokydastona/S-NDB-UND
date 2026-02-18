@@ -33,10 +33,12 @@ def _print_help() -> None:
         "  S-NDB-UND.exe generate <args>  (CLI generator; same flags as python -m soundgen.generate)\n"
         "  S-NDB-UND.exe web <args>       (Gradio UI in your browser)\n"
         "  S-NDB-UND.exe desktop <args>   (UI in an embedded desktop window)\n"
-        "  S-NDB-UND.exe mobset <args>    (Minecraft mob soundset generator)\n\n"
+        "  S-NDB-UND.exe mobset <args>    (Minecraft mob soundset generator)\n"
+        "  S-NDB-UND.exe loop <args>      (Loop suite: auto loop points, tail trim, noise bed helpers)\n\n"
         "Help:\n"
         "  S-NDB-UND.exe mobset --help\n"
         "  S-NDB-UND.exe generate --help\n"
+        "  S-NDB-UND.exe loop --help\n"
     )
 
 
@@ -78,6 +80,11 @@ def main(argv: list[str] | None = None) -> int:
         from .mob_soundset import run_mob_soundset
 
         return int(run_mob_soundset(rest))
+
+    if cmd == "loop":
+        from .loop_suite import run_loop_suite
+
+        return int(run_loop_suite(rest))
 
     # Unknown subcommand.
     _print_help()

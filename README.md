@@ -189,6 +189,30 @@ python -m soundgen.benchmark --suite default --engines rfxgen layered diffusers 
 python -m soundgen.benchmark --suite creature --engines layered stable_audio_open --repeats 3 --candidates 3 --polish
 ```
 
+## Loop suite (auto loop points + tail trim + noise bed)
+
+These tools help turn generated ambience into loopable game-ready assets.
+
+```powershell
+# Find loop points and export a loopable segment
+python -m soundgen.loop_suite auto --in outputs\amb.wav --out outputs\amb_loop.wav --min-loop-s 1.5 --max-loop-s 8 --crossfade-ms 40
+
+# Trim low-energy tail
+python -m soundgen.loop_suite trim-tail --in outputs\amb.wav --out outputs\amb_trim.wav --threshold-db -45 --hold-ms 200
+
+# Extract a low-energy bed and loop it to 6s
+python -m soundgen.loop_suite extract-bed --in outputs\amb.wav --out outputs\amb_bed.wav --seconds 6
+
+# Mix the bed under a sound
+python -m soundgen.loop_suite mix-bed --in outputs\amb_trim.wav --bed outputs\amb_bed.wav --out outputs\amb_bedmix.wav --bed-gain-db -28
+```
+
+Windows EXE usage:
+
+```powershell
+S-NDB-UND.exe loop auto --in outputs\amb.wav --out outputs\amb_loop.wav
+```
+
 ## Generate from the CLI
 
 ```powershell
