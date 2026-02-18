@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
+import sys
 import uuid
 import zipfile
 from dataclasses import replace
@@ -79,19 +81,15 @@ def _safe_item_key(item_id: str) -> str:
     return t or "item"
 
 
-def _ui_project_load(project_root: str) -> tuple[dict[str, Any] | None, list[list[object]]]:
-    root = Path(str(project_root or "").strip() or ".")
-    try:
-        from .project import load_project
-
-        proj = load_project(root)
-    except Exception as e:
-        return {"error": str(e), "root": str(root)}, []
-
+def _ui_project_rows(proj: dict[str, Any]) -> tuple[list[list[object]], list[str]]:
     rows: list[list[object]] = []
+    ids: list[str] = []
     for it in (proj.get("items") or []):
         if not isinstance(it, dict):
             continue
+        iid = str(it.get("id") or "").strip()
+        if iid:
+            ids.append(iid)
         rows.append(
             [
                 it.get("id"),
@@ -103,8 +101,187 @@ def _ui_project_load(project_root: str) -> tuple[dict[str, Any] | None, list[lis
                 it.get("active_version"),
             ]
         )
+    return rows, ids
 
-    return proj, rows
+
+def _run_subprocess(argv: list[str]) -> str:
+    completed = subprocess.run(argv, capture_output=True, text=True)
+    out = (completed.stdout or "") + ("\n" if completed.stdout and completed.stderr else "") + (completed.stderr or "")
+    out = out.strip()
+    if completed.returncode != 0:
+        return (out + f"\n(exit {completed.returncode})").strip()
+    return out or "(ok)"
+
+
+def _ui_project_load(project_root: str):
+    root = Path(str(project_root or "").strip() or ".")
+    try:
+        from .project import load_project
+
+        proj = load_project(root)
+    except Exception as e:
+        return {"error": str(e), "root": str(root)}, [], gr.update(choices=[], value=None), f"Load failed: {e}"
+
+    rows, ids = _ui_project_rows(proj)
+    dd = gr.update(choices=ids, value=(ids[0] if ids else None))
+    return proj, rows, dd, f"Loaded project with {len(ids)} item(s)."
+
+
+def _ui_project_rename(project_root: str, old_id: str, new_id: str):
+    root = Path(str(project_root or "").strip() or ".")
+    oid = str(old_id or "").strip()
+    nid = str(new_id or "").strip()
+    if not oid or not nid:
+        proj, rows, dd, _ = _ui_project_load(str(root))
+        return proj, rows, dd, "Set both old id and new id."
+
+    try:
+        from .project import load_project, save_project
+
+        proj = load_project(root)
+        items = proj.get("items")
+        if not isinstance(items, list):
+            items = []
+            proj["items"] = items
+
+        if any(isinstance(it, dict) and str(it.get("id") or "").strip() == nid for it in items):
+            rows, ids = _ui_project_rows(proj)
+            return proj, rows, gr.update(choices=ids, value=(nid if nid in ids else (ids[0] if ids else None))), (
+                f"Rename failed: id already exists: {nid}"
+            )
+
+        found = False
+        for it in items:
+            if isinstance(it, dict) and str(it.get("id") or "").strip() == oid:
+                it["id"] = nid
+                found = True
+                break
+        if not found:
+            rows, ids = _ui_project_rows(proj)
+            return proj, rows, gr.update(choices=ids, value=(ids[0] if ids else None)), f"Rename failed: unknown id: {oid}"
+
+        save_project(root, proj)
+        rows, ids = _ui_project_rows(proj)
+        return proj, rows, gr.update(choices=ids, value=(nid if nid in ids else (ids[0] if ids else None))), (
+            f"Renamed item: {oid} -> {nid} (existing versions keep their original file paths)."
+        )
+    except Exception as e:
+        return {"error": str(e), "root": str(root)}, [], gr.update(choices=[], value=None), f"Rename failed: {e}"
+
+
+def _ui_project_duplicate(project_root: str, src_id: str, new_id: str):
+    root = Path(str(project_root or "").strip() or ".")
+    sid = str(src_id or "").strip()
+    nid = str(new_id or "").strip()
+    if not sid:
+        proj, rows, dd, _ = _ui_project_load(str(root))
+        return proj, rows, dd, "Pick an item id to duplicate."
+    if not nid:
+        nid = f"{sid}_copy"
+
+    try:
+        from .project import load_project, save_project
+
+        proj = load_project(root)
+        items = proj.get("items")
+        if not isinstance(items, list):
+            items = []
+            proj["items"] = items
+
+        if any(isinstance(it, dict) and str(it.get("id") or "").strip() == nid for it in items):
+            rows, ids = _ui_project_rows(proj)
+            return proj, rows, gr.update(choices=ids, value=(nid if nid in ids else (ids[0] if ids else None))), (
+                f"Duplicate failed: id already exists: {nid}"
+            )
+
+        src_item: dict[str, Any] | None = None
+        for it in items:
+            if isinstance(it, dict) and str(it.get("id") or "").strip() == sid:
+                src_item = it
+                break
+        if src_item is None:
+            rows, ids = _ui_project_rows(proj)
+            return proj, rows, gr.update(choices=ids, value=(ids[0] if ids else None)), f"Duplicate failed: unknown id: {sid}"
+
+        new_item = json.loads(json.dumps(src_item))
+        if not isinstance(new_item, dict):
+            raise ValueError("Duplicate failed: item is not a dict")
+
+        new_item["id"] = nid
+        new_item["active_version"] = None
+        new_item["versions"] = []
+        items.append(new_item)
+        save_project(root, proj)
+
+        rows, ids = _ui_project_rows(proj)
+        return proj, rows, gr.update(choices=ids, value=(nid if nid in ids else (ids[0] if ids else None))), (
+            f"Duplicated item: {sid} -> {nid}. Note: event/sound_path were copied; update them to avoid pack collisions."
+        )
+    except Exception as e:
+        return {"error": str(e), "root": str(root)}, [], gr.update(choices=[], value=None), f"Duplicate failed: {e}"
+
+
+def _ui_project_delete(project_root: str, item_id: str, confirm: bool):
+    root = Path(str(project_root or "").strip() or ".")
+    iid = str(item_id or "").strip()
+    if not iid:
+        proj, rows, dd, _ = _ui_project_load(str(root))
+        return proj, rows, dd, "Pick an item id to delete."
+    if not bool(confirm):
+        proj, rows, dd, _ = _ui_project_load(str(root))
+        return proj, rows, dd, "Delete not confirmed. Check 'Confirm delete' first."
+
+    try:
+        from .project import load_project, save_project
+
+        proj = load_project(root)
+        items = proj.get("items")
+        if not isinstance(items, list):
+            items = []
+            proj["items"] = items
+
+        before = len(items)
+        proj["items"] = [it for it in items if not (isinstance(it, dict) and str(it.get("id") or "").strip() == iid)]
+        after = len(proj["items"])
+        if after == before:
+            rows, ids = _ui_project_rows(proj)
+            return proj, rows, gr.update(choices=ids, value=(ids[0] if ids else None)), f"Delete failed: unknown id: {iid}"
+
+        save_project(root, proj)
+        rows, ids = _ui_project_rows(proj)
+        return proj, rows, gr.update(choices=ids, value=(ids[0] if ids else None)), (
+            f"Deleted item: {iid}. Note: existing files under project_audio/ are not removed automatically."
+        )
+    except Exception as e:
+        return {"error": str(e), "root": str(root)}, [], gr.update(choices=[], value=None), f"Delete failed: {e}"
+
+
+def _ui_project_build_and_reload(project_root: str, item_id: str):
+    root = str(project_root or "").strip()
+    if not root:
+        return None, [], gr.update(choices=[], value=None), "Set Project root first."
+
+    args = [sys.executable, "-m", "soundgen.app", "project", "build", "--root", root]
+    if str(item_id or "").strip():
+        args += ["--id", str(item_id).strip()]
+    out = _run_subprocess(args)
+
+    # Reload project to show updated active_version / versions.
+    proj, rows, dd, _ = _ui_project_load(root)
+    return proj, rows, dd, out
+
+
+def _ui_project_edit(project_root: str, item_id: str) -> str:
+    root = str(project_root or "").strip()
+    iid = str(item_id or "").strip()
+    if not root or not iid:
+        return "Set Project root and Item id first."
+
+    try:
+        subprocess.Popen([sys.executable, "-m", "soundgen.app", "project", "edit", "--root", root, "--id", iid])
+        return f"Launched editor for item: {iid}"
+    except Exception as e:
+        return f"Failed to launch: {e}"
 
 
 def _run_generate_variants(
@@ -520,6 +697,16 @@ def build_demo_control_panel() -> gr.Blocks:
                 pr_root = gr.Textbox(value=".", label="Project root")
                 pr_load_btn = gr.Button("Load project")
                 pr_json = gr.JSON(label="Project")
+                pr_item_id = gr.Dropdown(choices=[], value=None, label="Item id")
+                pr_new_id = gr.Textbox(value="", label="New id (rename/duplicate)")
+                pr_confirm_delete = gr.Checkbox(value=False, label="Confirm delete")
+                with gr.Row():
+                    pr_rename_btn = gr.Button("Rename")
+                    pr_dup_btn = gr.Button("Duplicate")
+                    pr_del_btn = gr.Button("Delete")
+                with gr.Row():
+                    pr_build_btn = gr.Button("Build")
+                    pr_edit_btn = gr.Button("Edit")
                 pr_items = gr.Dataframe(
                     headers=["id", "category", "engine", "event", "sound_path", "variants", "active_version"],
                     datatype=["str", "str", "str", "str", "str", "number", "number"],
@@ -529,7 +716,32 @@ def build_demo_control_panel() -> gr.Blocks:
                     label="Items",
                 )
                 pr_status = gr.Textbox(label="Status", interactive=False)
-                pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items])
+                pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items, pr_item_id, pr_status])
+                pr_rename_btn.click(
+                    fn=_ui_project_rename,
+                    inputs=[pr_root, pr_item_id, pr_new_id],
+                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
+                )
+                pr_dup_btn.click(
+                    fn=_ui_project_duplicate,
+                    inputs=[pr_root, pr_item_id, pr_new_id],
+                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
+                )
+                pr_del_btn.click(
+                    fn=_ui_project_delete,
+                    inputs=[pr_root, pr_item_id, pr_confirm_delete],
+                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
+                )
+                pr_build_btn.click(
+                    fn=_ui_project_build_and_reload,
+                    inputs=[pr_root, pr_item_id],
+                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
+                )
+                pr_edit_btn.click(
+                    fn=_ui_project_edit,
+                    inputs=[pr_root, pr_item_id],
+                    outputs=[pr_status],
+                )
 
             with gr.Column(scale=1):
                 gr.Markdown("## Preset Browser")
