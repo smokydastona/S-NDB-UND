@@ -18,8 +18,10 @@ Legend: **Done** / **In repo (basic)** / **Next** / **Later (optional)**
 ## v2 Editor (early)
 
 - **In repo (basic)**: spectrogram view toggle + adjustable FFT + frequency zoom (`S`/`F`/`Z`)
+- **In repo (basic)**: click-removal targeting (right-click targets selection) + de-click repair (`K`)
 - **In repo (basic)**: transient detection auto-mark + snap selection to transient (`T`/`J`)
 - **In repo (basic)**: auto loop points + auto-crossfade loop creation (`A`)
+- **In repo (basic)**: seamless loop preview (cyclic crossfade on loop audition) (`l`)
 - **In repo (basic)**: multi-region slicing + export-all (`R`, `O`) with per-region FX hook (`C`)
 - **In repo (basic)**: per-region loop point metadata export (`{`, `}`)
 

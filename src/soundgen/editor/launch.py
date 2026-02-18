@@ -108,6 +108,52 @@ def _fade_out(x: np.ndarray) -> np.ndarray:
     return (x.astype(np.float32) * ramp).astype(np.float32)
 
 
+def _cyclic_crossfade(x: np.ndarray, *, crossfade: int) -> np.ndarray:
+    """Apply a cyclic crossfade so end->start loops more smoothly.
+
+    This is intended for *preview* (loop audition) and small repair operations.
+    """
+
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(x.size)
+    crossfade = int(crossfade)
+    if n <= 2 or crossfade <= 0:
+        return x
+    cf = max(1, min(crossfade, n // 2))
+
+    head = x[:cf].copy()
+    tail = x[-cf:].copy()
+
+    # Equal-power-ish blend across the loop boundary.
+    t = np.linspace(0.0, 1.0, cf, endpoint=False, dtype=np.float32)
+    w_in = np.sin(0.5 * math.pi * t).astype(np.float32)
+    w_out = np.cos(0.5 * math.pi * t).astype(np.float32)
+
+    y = x.copy()
+    y[:cf] = (tail * w_out + head * w_in).astype(np.float32)
+    y[-cf:] = (tail * w_in + head * w_out).astype(np.float32)
+    return y
+
+
+def _repair_click_linear(x: np.ndarray, *, lo: int, hi: int) -> np.ndarray:
+    """Replace [lo, hi) with a smooth bridge between endpoints."""
+
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(x.size)
+    lo = max(0, min(int(lo), n))
+    hi = max(lo, min(int(hi), n))
+    if hi - lo <= 1 or n <= 1:
+        return x
+
+    left = float(x[lo - 1]) if lo - 1 >= 0 else float(x[hi])
+    right = float(x[hi]) if hi < n else float(x[lo - 1])
+    fill = np.linspace(left, right, hi - lo, endpoint=False, dtype=np.float32)
+
+    y = x.copy()
+    y[lo:hi] = fill
+    return y
+
+
 def _normalize_peak(x: np.ndarray, *, target_db: float = -1.0) -> tuple[np.ndarray, float]:
     peak = float(np.max(np.abs(x)) + 1e-12)
     peak_db = _lin_to_db(peak)
@@ -355,6 +401,7 @@ def _help_text() -> str:
         "  f: fade in (selection)\n"
         "  g: fade out (selection)\n"
         "  k: crossfade-delete selection (smooth splice)\n"
+        "  K: de-click (repair selection, or small window at cursor)\n"
         "  n: normalize peak to -1 dBFS (whole file)\n"
         "  +/-: gain ±1 dB (selection if present else whole file)\n"
         "\n"
@@ -560,7 +607,20 @@ def launch_editor(wav_path: str | Path) -> None:
             return
         if ev.xdata is None:
             return
-        _set_cursor(int(round(float(ev.xdata) * float(st.sample_rate))))
+        sample = int(round(float(ev.xdata) * float(st.sample_rate)))
+        _set_cursor(sample)
+        # Right-click (esp. in spectrogram view) targets a small de-click selection.
+        # This gives quick "click removal targeting" without needing modifier keys.
+        try:
+            btn = int(getattr(ev, "button", 1) or 1)
+        except Exception:
+            btn = 1
+        if btn == 3:
+            half = int(0.006 * float(st.sample_rate))  # ~12ms window
+            a = max(0, min(sample - half, int(st.audio.size)))
+            b = max(0, min(sample + half, int(st.audio.size)))
+            if b > a:
+                st.selection = (a, b)
         _render()
 
     def _region_list() -> list[dict[str, Any]]:
@@ -1053,6 +1113,40 @@ def launch_editor(wav_path: str | Path) -> None:
         _push_edit("crossfade_delete", {"removed_samples": int(hi - lo), "crossfade_ms": 40.0})
         _render()
 
+    def _do_declick() -> None:
+        rng = _sel_range()
+        if rng is None:
+            # Default to a small window at cursor.
+            half = int(0.006 * float(st.sample_rate))
+            lo = max(0, min(int(st.cursor) - half, int(st.audio.size)))
+            hi = max(0, min(int(st.cursor) + half, int(st.audio.size)))
+            if hi <= lo:
+                return
+            rng = (lo, hi)
+
+        lo, hi = rng
+        undo.push(st)
+        y = _repair_click_linear(st.audio, lo=lo, hi=hi)
+        # Light cyclic smoothing over the boundary neighborhood.
+        cf = int(0.003 * float(st.sample_rate))  # 3ms
+        lo2 = max(0, lo - cf)
+        hi2 = min(int(y.size), hi + cf)
+        seg = _cyclic_crossfade(y[lo2:hi2], crossfade=min(cf, max(1, (hi2 - lo2) // 4)))
+        y2 = y.copy()
+        y2[lo2:hi2] = seg
+        st.audio = _clip_mono(y2)
+        st.selection = None
+        _set_cursor(lo)
+        _push_edit(
+            "declick",
+            {
+                "start_s": float(lo) / float(st.sample_rate),
+                "end_s": float(hi) / float(st.sample_rate),
+                "method": "linear_bridge",
+            },
+        )
+        _render()
+
     def _do_paste() -> None:
         if st.clipboard is None or st.clipboard.size == 0:
             return
@@ -1168,7 +1262,12 @@ def launch_editor(wav_path: str | Path) -> None:
         if sys.platform != "win32":
             print("Playback is only implemented on Windows in this editor.")
             return
-        player.play_segment(audio=st.audio, sr=st.sample_rate, start=lo, end=hi, loop=loop)
+        seg = st.audio[lo:hi].copy()
+        if loop and seg.size > 8:
+            # Seamless loop preview: apply a cyclic crossfade so the loop boundary is smoother.
+            cf = int(0.040 * float(st.sample_rate))
+            seg = _cyclic_crossfade(seg, crossfade=cf)
+        player.play_segment(audio=seg, sr=st.sample_rate, start=0, end=int(seg.size), loop=loop)
 
     def _toggle_spec() -> None:
         st.view_mode = "spec" if str(st.view_mode).strip().lower() != "spec" else "wave"
@@ -1409,6 +1508,10 @@ def launch_editor(wav_path: str | Path) -> None:
 
         if key in {"k"}:
             _do_crossfade_delete()
+            return
+
+        if key in {"K"}:
+            _do_declick()
             return
 
         if key in {"n"}:
