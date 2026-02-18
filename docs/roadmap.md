@@ -6,7 +6,7 @@ For a tight definition of “one‑stop shop” (and a buildable MVP scope), see
 
 For model ecosystem notes (what’s worth copying, what’s risky), see `docs/audio_generation_landscape.md`.
 
-Legend: **Done** / **In repo (basic)** / **Next** / **Later**
+Legend: **Done** / **In repo (basic)** / **Next** / **Later (optional)**
 
 ## Phase 1 — Core foundations (toward 1.0)
 
