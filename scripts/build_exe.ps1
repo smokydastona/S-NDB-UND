@@ -62,7 +62,7 @@ function Invoke-PyInstaller {
 
 $appArgs = @()
 $appArgs += $commonArgs
-$appArgs += @("--name", $appName)
+$appArgs += @("--name", $baseAppName)
 $appArgs += $commonCollect
 $appArgs += @(
   "--distpath", $OutDir,
@@ -71,5 +71,13 @@ $appArgs += @(
 )
 
 Invoke-PyInstaller -Args $appArgs
+
+# If versioned, rename the output folder, but keep the EXE name stable.
+if ($appName -ne $baseAppName) {
+  $src = Join-Path $OutDir $baseAppName
+  $dst = Join-Path $OutDir $appName
+  if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+  if (Test-Path $src) { Move-Item -Force $src $dst }
+}
 
 Write-Host "Built executable into $OutDir\\$appName"

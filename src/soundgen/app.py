@@ -128,9 +128,11 @@ def main(argv: list[str] | None = None) -> int:
     _write_startup_log(f"invoke argv={argv!r}")
     # Default: desktop UI.
     if not argv:
-        from .desktop import run_desktop
-
-        return _run_gui_mode(lambda: run_desktop([]), mode_name="Desktop UI", argv=[])
+        return _run_gui_mode(
+            lambda: __import__("soundgen.desktop", fromlist=["run_desktop"]).run_desktop([]),
+            mode_name="Desktop UI",
+            argv=[],
+        )
 
     cmd = str(argv[0]).strip().lower()
     rest = [str(x) for x in argv[1:]]
@@ -151,14 +153,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if cmd == "web":
-        from .web import main as web_main
-
-        return _run_gui_mode(lambda: (web_main() or 0), mode_name="Web UI", argv=rest)
+        return _run_gui_mode(
+            lambda: (__import__("soundgen.web", fromlist=["main"]).main() or 0),
+            mode_name="Web UI",
+            argv=rest,
+        )
 
     if cmd == "desktop":
-        from .desktop import run_desktop
-
-        return _run_gui_mode(lambda: run_desktop(rest), mode_name="Desktop UI", argv=rest)
+        return _run_gui_mode(
+            lambda: __import__("soundgen.desktop", fromlist=["run_desktop"]).run_desktop(rest),
+            mode_name="Desktop UI",
+            argv=rest,
+        )
 
     if cmd == "mobset":
         from .mob_soundset import run_mob_soundset

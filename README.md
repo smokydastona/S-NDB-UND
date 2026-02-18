@@ -205,6 +205,7 @@ python -m soundgen.doctor --check-stable-audio
 - **CUDA issues / torch mismatch**: start with `--device cpu`. If you want GPU, install a torch build that matches your CUDA drivers.
 - **Python install problems**: if dependency installs fail on very new Python versions, try Python 3.12 (the GitHub Actions EXE build uses 3.12).
 - **Windows EXE opens nothing** (Desktop UI): this usually means `pywebview` or the Microsoft Edge **WebView2 Runtime** is missing. Try `S-NDB-UND.exe web` to open in your browser, or check the startup log at `%LOCALAPPDATA%\S-NDB-UND\startup.log`.
+- **Windows SmartScreen blocks the EXE**: click **More info** → **Run anyway**. If you downloaded a ZIP, right-click it → **Properties** → **Unblock** (then re-extract), or run `Unblock-File .\S-NDB-UND-*-windows.zip` in PowerShell before extracting.
 
 ## Windows .exe builds (optional)
 
