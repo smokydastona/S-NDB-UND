@@ -34,6 +34,7 @@ def _generate(
     stable_audio_steps: int,
     stable_audio_guidance_scale: float,
     stable_audio_sampler: str,
+    hybrid_base_engine: str,
     diffusers_multiband: bool,
     diffusers_mb_mode: str,
     diffusers_mb_low_hz: float,
@@ -277,7 +278,7 @@ def _generate(
         if preset_obj is not None:
             # Prompt augmentation for AI/sample selection engines.
             eng = str(engine or "").strip().lower()
-            if preset_obj.prompt_suffix and eng in {"diffusers", "stable_audio_open", "replicate", "samplelib", "layered"}:
+            if preset_obj.prompt_suffix and eng in {"diffusers", "stable_audio_open", "replicate", "samplelib", "layered", "hybrid"}:
                 suf = str(preset_obj.prompt_suffix).strip()
                 if suf and suf.lower() not in str(prompt).lower():
                     prompt = str(prompt).rstrip() + ", " + suf
@@ -798,8 +799,8 @@ def _generate(
     for i in range(v):
         suffix = f"_{i+1:02d}" if v > 1 else ""
         wav_path = Path("outputs") / f"web_{engine}{suffix}.wav"
-        seed_i = base_seed if (engine == "layered" and layered_family) else (base_seed + i)
-        if engine == "layered" and layered_source_lock:
+        seed_i = base_seed if (engine in {"layered", "hybrid"} and layered_family) else (base_seed + i)
+        if engine in {"layered", "hybrid"} and layered_source_lock:
             if layered_source_seed is None:
                 source_seed_i = base_seed
             else:
@@ -818,6 +819,7 @@ def _generate(
                 postprocess_fn=_postprocess_fn,
                 device=device,
                 model=model,
+                hybrid_base_engine=(str(hybrid_base_engine or "stable_audio_open").strip().lower() or "stable_audio_open"),
                 stable_audio_model=str(stable_audio_model or "stabilityai/stable-audio-open-1.0"),
                 stable_audio_negative_prompt=(stable_audio_negative_prompt or None),
                 stable_audio_hf_token=(stable_audio_hf_token or None),
@@ -1005,6 +1007,13 @@ def build_demo() -> gr.Blocks:
                     ["auto", "ddim", "deis", "dpmpp", "dpmpp_2m", "euler", "euler_a"],
                     value="auto",
                     label="Sampler (scheduler)",
+                )
+
+            with gr.Accordion("Hybrid (engine settings)", open=False, visible=False) as hybrid_acc:
+                hybrid_base_engine = gr.Dropdown(
+                    ["stable_audio_open", "diffusers"],
+                    value="stable_audio_open",
+                    label="Hybrid base engine",
                 )
 
             with gr.Accordion("Diffusers multi-band (model-side)", open=False, visible=True) as diffusers_mb_acc:
@@ -1196,6 +1205,7 @@ def build_demo() -> gr.Blocks:
                 is_sample = e == "samplelib"
                 is_synth = e == "synth"
                 is_layered = e == "layered"
+                is_hybrid = e == "hybrid"
 
                 return (
                     gr.update(visible=is_diffusers),
@@ -1211,6 +1221,7 @@ def build_demo() -> gr.Blocks:
                     gr.update(visible=is_layered),
                     gr.update(visible=is_layered, open=is_layered),
                     gr.update(visible=is_layered, open=False),
+                    gr.update(visible=is_hybrid, open=is_hybrid),
                 )
 
             engine.change(
@@ -1230,6 +1241,7 @@ def build_demo() -> gr.Blocks:
                     layered_tilt_row,
                     layered_adv_acc,
                     layered_fx_acc,
+                    hybrid_acc,
                 ],
             )
 
@@ -1435,6 +1447,7 @@ def build_demo() -> gr.Blocks:
                 stable_audio_steps,
                 stable_audio_guidance_scale,
                 stable_audio_sampler,
+                hybrid_base_engine,
                 diffusers_multiband,
                 diffusers_mb_mode,
                 diffusers_mb_low_hz,

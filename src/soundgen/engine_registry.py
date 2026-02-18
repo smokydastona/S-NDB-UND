@@ -32,6 +32,7 @@ BUILTIN_ENGINES: tuple[str, ...] = (
     "replicate",
     "samplelib",
     "synth",
+    "hybrid",
     "layered",
 )
 
@@ -170,6 +171,8 @@ def generate_wav(
     layered_tail_decay_ms: float = 320.0,
     layered_duck_amount: float = 0.35,
     layered_duck_release_ms: float = 90.0,
+    # hybrid
+    hybrid_base_engine: str = "stable_audio_open",  # stable_audio_open|diffusers
     # stable audio open
     stable_audio_model: str | None = None,
     stable_audio_negative_prompt: str | None = None,
@@ -636,6 +639,97 @@ def generate_wav(
         write_wav(out_wav, audio, sr)
         credits_extra = {"waveform": sp.waveform, "freq_hz": sp.freq_hz, "analysis": _analysis_dict(audio, sr)}
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
+
+    if engine == "hybrid":
+        from .hybrid_backend import HybridParams, generate_with_hybrid
+
+        hp = HybridParams(
+            prompt=prompt,
+            seconds=float(seconds),
+            seed=seed,
+            device=str(device or "cpu"),
+            base_engine=str(hybrid_base_engine or "stable_audio_open"),
+
+            stable_audio_model=str(stable_audio_model or "stabilityai/stable-audio-open-1.0"),
+            stable_audio_negative_prompt=(str(stable_audio_negative_prompt) if stable_audio_negative_prompt else None),
+            stable_audio_steps=int(stable_audio_steps),
+            stable_audio_guidance_scale=float(stable_audio_guidance_scale),
+            stable_audio_sampler=(str(stable_audio_sampler) if stable_audio_sampler else None),
+            stable_audio_hf_token=(str(stable_audio_hf_token).strip() if stable_audio_hf_token else None),
+            stable_audio_lora_path=(str(stable_audio_lora_path).strip() if stable_audio_lora_path else None),
+            stable_audio_lora_scale=float(stable_audio_lora_scale),
+            stable_audio_lora_trigger=(str(stable_audio_lora_trigger).strip() if stable_audio_lora_trigger else None),
+
+            diffusers_model=str(model or "cvssp/audioldm2"),
+            diffusers_multiband=bool(diffusers_multiband),
+            diffusers_multiband_mode=str(diffusers_multiband_mode or "auto"),
+            diffusers_multiband_low_hz=float(diffusers_multiband_low_hz),
+            diffusers_multiband_high_hz=float(diffusers_multiband_high_hz),
+
+            library_zips=tuple(Path(p) for p in library_zips),
+            library_pitch_min=float(library_pitch_min),
+            library_pitch_max=float(library_pitch_max),
+            library_mix_count=int(library_mix_count),
+            library_index_path=library_index_path,
+
+            layered_preset=str(layered_preset),
+            layered_preset_lock=bool(layered_preset_lock),
+            layered_variant_index=int(layered_variant_index),
+            layered_micro_variation=float(layered_micro_variation),
+            layered_env_curve_shape=str(layered_env_curve_shape),
+            layered_transient_tilt=float(layered_transient_tilt),
+            layered_body_tilt=float(layered_body_tilt),
+            layered_tail_tilt=float(layered_tail_tilt),
+            layered_xfade_transient_to_body_ms=float(layered_xfade_transient_to_body_ms),
+            layered_xfade_body_to_tail_ms=float(layered_xfade_body_to_tail_ms),
+            layered_xfade_curve_shape=str(layered_xfade_curve_shape),
+            layered_transient_hp_hz=float(layered_transient_hp_hz),
+            layered_transient_lp_hz=float(layered_transient_lp_hz),
+            layered_transient_drive=float(layered_transient_drive),
+            layered_transient_gain_db=float(layered_transient_gain_db),
+            layered_body_hp_hz=float(layered_body_hp_hz),
+            layered_body_lp_hz=float(layered_body_lp_hz),
+            layered_body_drive=float(layered_body_drive),
+            layered_body_gain_db=float(layered_body_gain_db),
+            layered_tail_hp_hz=float(layered_tail_hp_hz),
+            layered_tail_lp_hz=float(layered_tail_lp_hz),
+            layered_tail_drive=float(layered_tail_drive),
+            layered_tail_gain_db=float(layered_tail_gain_db),
+            layered_source_lock=bool(layered_source_lock),
+            layered_source_seed=(int(layered_source_seed) if layered_source_seed is not None else None),
+            layered_granular_preset=str(layered_granular_preset),
+            layered_granular_amount=float(layered_granular_amount),
+            layered_granular_grain_ms=float(layered_granular_grain_ms),
+            layered_granular_spray=float(layered_granular_spray),
+            layered_transient_ms=int(layered_transient_ms),
+            layered_tail_ms=int(layered_tail_ms),
+            layered_transient_attack_ms=float(layered_transient_attack_ms),
+            layered_transient_hold_ms=float(layered_transient_hold_ms),
+            layered_transient_decay_ms=float(layered_transient_decay_ms),
+            layered_body_attack_ms=float(layered_body_attack_ms),
+            layered_body_hold_ms=float(layered_body_hold_ms),
+            layered_body_decay_ms=float(layered_body_decay_ms),
+            layered_tail_attack_ms=float(layered_tail_attack_ms),
+            layered_tail_hold_ms=float(layered_tail_hold_ms),
+            layered_tail_decay_ms=float(layered_tail_decay_ms),
+            layered_duck_amount=float(layered_duck_amount),
+            layered_duck_release_ms=float(layered_duck_release_ms),
+        )
+
+        res = generate_with_hybrid(hp)
+        audio = res.audio
+        sr = int(res.sample_rate)
+        if postprocess_fn is not None:
+            audio, post_info = postprocess_fn(audio, sr)
+        write_wav(out_wav, audio, sr)
+        credits_extra = dict(res.credits_extra)
+        credits_extra["analysis"] = _analysis_dict(audio, sr)
+        return GeneratedWav(
+            wav_path=out_wav,
+            post_info=post_info,
+            sources=tuple(res.sources),
+            credits_extra=credits_extra,
+        )
 
     if engine == "layered":
         from .layered_backend import LayeredParams, generate_with_layered

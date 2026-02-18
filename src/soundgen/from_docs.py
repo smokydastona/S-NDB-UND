@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Glob pattern inside the folder (default: **/*)",
     )
 
-    built = ["rfxgen", "diffusers", "stable_audio_open"]
+    built = ["rfxgen", "diffusers", "stable_audio_open", "hybrid"]
     extra = [e for e in available_engines() if e not in built]
     p.add_argument("--engine", choices=[*built, *extra], default="rfxgen")
     p.add_argument(

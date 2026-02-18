@@ -403,7 +403,7 @@ def run_item(item: ManifestItem, *, args: argparse.Namespace, parser: argparse.A
             # Optional pro preset prompt augmentation (only for AI/sample selection engines).
             preset_key = str(getattr(effective_args, "pro_preset", "off") or "off").strip()
             preset_obj = PRO_PRESETS.get(preset_key) if preset_key.lower() != "off" else None
-            if preset_obj is not None and preset_obj.prompt_suffix and engine in {"diffusers", "replicate", "samplelib", "layered", "stable_audio_open"}:
+            if preset_obj is not None and preset_obj.prompt_suffix and engine in {"diffusers", "replicate", "samplelib", "layered", "hybrid", "stable_audio_open"}:
                 suf = str(preset_obj.prompt_suffix).strip()
                 if suf and suf.lower() not in effective_prompt.lower():
                     effective_prompt = f"{effective_prompt}, {suf}"

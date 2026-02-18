@@ -25,6 +25,9 @@ python -m soundgen.web
 # CLI (single sound)
 python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav
 
+# Hybrid (AI base + procedural layering)
+python -m soundgen.generate --engine hybrid --hybrid-base-engine stable_audio_open --prompt "coin pickup" --seconds 1.0 --seed 123 --post --out outputs\coin_hybrid.wav
+
 # CLI + open in the built-in editor after generation
 python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav --edit
 
@@ -45,7 +48,7 @@ Suggested folder: `docs/screenshots/` and then link them here.
 
 ```mermaid
 flowchart LR
-	A[Prompt / Manifest / Docs] --> B[Engine\n(diffusers | stable_audio_open | rfxgen | replicate | samplelib | synth | layered)]
+	A[Prompt / Manifest / Docs] --> B[Engine\n(diffusers | stable_audio_open | rfxgen | replicate | samplelib | synth | layered | hybrid)]
 	B --> C[Mono WAV\nfloat32 in [-1, 1]]
 	C --> D{Post / Polish?}
 	D -->|no| E[Export]
@@ -56,14 +59,15 @@ flowchart LR
 	E --> H[Credits\nsidecar + pack credits]
 ```
 
-This project supports six engines:
+This project supports seven engines:
 
 - **diffusers**: AI prompt-to-audio (AudioLDM2)
 - **stable_audio_open**: AI prompt-to-audio (Stable Audio Open 1.0 via diffusers; typically gated)
 - **rfxgen**: procedural chiptune-style SFX presets (coin/laser/explosion/etc)
 - **samplelib**: picks + randomizes samples from ZIP sound libraries (uses ffmpeg to decode)
 - **synth**: DSP synth engine (waveforms + ADSR + filters + drive)
-- **layered**: hybrid engine (samplelib transient/tail + synth body)
+- **layered**: procedural hybrid engine (samplelib transient/tail + synth body)
+- **hybrid**: AI + procedural layering engine (AI base + transient/tail + optional granular texture)
 
 ## Setup (Windows)
 

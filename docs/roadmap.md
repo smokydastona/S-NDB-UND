@@ -56,7 +56,7 @@ v2 is considered **complete** when every section below is **Done** end-to-end (c
   - **Done gate**: pack export (Minecraft-ready where applicable) + versioning per sound
   - **Done gate**: Minecraft project mode (generate → edit → export) workflow documented
 
-- **v2.5 Hybrid Engine Mode (AI + Procedural Layering)** — **Next**
+- **v2.5 Hybrid Engine Mode (AI + Procedural Layering)** — **Done**
   - **Done gate**: AI base + procedural transient/noise texture layers + automix
   - **Done gate**: apply FX chain to final composite + credits capture
 
@@ -128,7 +128,7 @@ v3 is considered **complete** when every section below is **Done** end-to-end (c
 
 - **1.1 Multi‑engine architecture** — **Done**
   - Central dispatcher: `soundgen.engine_registry.generate_wav`
-  - Engines: `diffusers`, `stable_audio_open`, `rfxgen`, `replicate`, `samplelib`, `synth`, `layered`
+  - Engines: `diffusers`, `stable_audio_open`, `rfxgen`, `replicate`, `samplelib`, `synth`, `layered`, `hybrid`
 
 - **1.2 Stable Audio Open engine** — **Done**
   - Wrapper: `soundgen.stable_audio_backend`

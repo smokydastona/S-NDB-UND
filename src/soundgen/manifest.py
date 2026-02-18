@@ -14,7 +14,7 @@ class ManifestItem:
     sfx_preset: Optional[str] = None
     sfx_preset_file: Optional[str] = None
 
-    engine: Optional[str] = None  # diffusers | stable_audio_open | rfxgen | replicate | samplelib | synth | layered
+    engine: Optional[str] = None  # diffusers | stable_audio_open | rfxgen | replicate | samplelib | synth | layered | hybrid
 
     namespace: str = "soundgen"
     event: str = "generated.sound"

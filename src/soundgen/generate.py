@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=available_engines(),
         default="diffusers",
-        help="Generation engine (built-ins + optional plugins). Built-ins: diffusers, stable_audio_open, rfxgen, replicate, samplelib, synth, layered.",
+        help="Generation engine (built-ins + optional plugins). Built-ins: diffusers, stable_audio_open, rfxgen, replicate, samplelib, synth, layered, hybrid.",
     )
     p.add_argument(
         "--prompt",
@@ -82,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "ddim", "deis", "dpmpp", "dpmpp_2m", "euler", "euler_a"],
         help="For engine=stable_audio_open: sampler/scheduler (default auto).",
+    )
+
+    p.add_argument(
+        "--hybrid-base-engine",
+        default="stable_audio_open",
+        choices=["stable_audio_open", "diffusers"],
+        help="For engine=hybrid: which AI engine provides the base layer (default stable_audio_open).",
     )
 
     # Creature-family fine-tuning (LoRA) for Stable Audio Open (inference-time loading).
@@ -958,7 +965,7 @@ def main(argv: list[str] | None = None) -> int:
 
             return _pp_apply
 
-        if engine in {"diffusers", "synth", "layered"}:
+        if engine in {"diffusers", "synth", "layered", "hybrid"}:
             def _qa_only(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
                 return audio, _qa_info(audio, sr)
 
@@ -1118,6 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             device=str(args.device),
             model=str(args.model),
+            hybrid_base_engine=str(getattr(args, "hybrid_base_engine", "stable_audio_open") or "stable_audio_open"),
             stable_audio_model=str(args.stable_audio_model or "stabilityai/stable-audio-open-1.0"),
             stable_audio_negative_prompt=(args.stable_audio_negative_prompt or None),
             stable_audio_steps=int(args.stable_audio_steps),
@@ -1223,13 +1231,13 @@ def main(argv: list[str] | None = None) -> int:
 
                 if args.engine in {"diffusers", "stable_audio_open", "samplelib", "synth"}:
                     seed_i = int(base_seed) + i
-                elif args.engine == "layered":
+                elif args.engine in {"layered", "hybrid"}:
                     seed_i = int(base_seed) if args.layered_family else (int(base_seed) + i)
                 else:
                     seed_i = None
 
                 source_seed_i: int | None = None
-                if args.engine == "layered" and args.layered_source_lock:
+                if args.engine in {"layered", "hybrid"} and args.layered_source_lock:
                     source_seed_i = (
                         int(args.layered_source_seed)
                         if args.layered_source_seed is not None
@@ -1253,13 +1261,13 @@ def main(argv: list[str] | None = None) -> int:
                 tmp_wav = Path(tmp) / f"{args.engine}{suffix}.wav"
                 if args.engine in {"diffusers", "stable_audio_open", "samplelib", "synth"}:
                     seed_i = int(base_seed) + i
-                elif args.engine == "layered":
+                elif args.engine in {"layered", "hybrid"}:
                     seed_i = int(base_seed) if args.layered_family else (int(base_seed) + i)
                 else:
                     seed_i = None
 
                 source_seed_i: int | None = None
-                if args.engine == "layered" and args.layered_source_lock:
+                if args.engine in {"layered", "hybrid"} and args.layered_source_lock:
                     source_seed_i = (
                         int(args.layered_source_seed)
                         if args.layered_source_seed is not None
@@ -1286,7 +1294,7 @@ def main(argv: list[str] | None = None) -> int:
         tmp_dir = Path(tmp)
         tmp_wav = tmp_dir / "generated.wav"
         source_seed_single: int | None = None
-        if args.engine == "layered" and args.layered_source_lock:
+        if args.engine in {"layered", "hybrid"} and args.layered_source_lock:
             if args.layered_source_seed is not None:
                 source_seed_single = int(args.layered_source_seed)
             elif args.seed is not None:
