@@ -6,6 +6,8 @@ from typing import Optional
 import numpy as np
 from scipy import signal
 
+from .envelope_follower import coeffs_from_ms
+
 
 @dataclass(frozen=True)
 class PostProcessParams:
@@ -77,6 +79,21 @@ class PostProcessParams:
     # Loop cleaning (for ambience): blend the end into the start to reduce seam clicks.
     loop_clean: bool = False
     loop_crossfade_ms: int = 100
+    loop_crossfade_curve: str = "linear"  # linear|equal_power|exponential
+
+    # Optional ducking (offline sidechain-style): duck the low/mid "bed" under transients.
+    duck_bed: bool = False
+    duck_bed_split_hz: float = 1800.0
+    duck_bed_amount: float = 0.35
+    duck_bed_attack_ms: float = 2.0
+    duck_bed_release_ms: float = 120.0
+
+    # Optional advanced: override the post chain ordering.
+    # Comma-separated list of block keys. Unknown keys are ignored.
+    post_stack: Optional[str] = None
+
+    # Dynamics follower mode (advanced): peak-ish vs RMS-ish.
+    compressor_follower_mode: str = "peak"  # peak|rms
 
 
 @dataclass(frozen=True)
@@ -154,6 +171,26 @@ def _apply_fade(x: np.ndarray, sr: int, *, fade_ms: int) -> np.ndarray:
     y[:fade_len] *= fade_in
     y[-fade_len:] *= fade_out
     return y
+
+
+def _xfade_curve(n: int, *, shape: str) -> np.ndarray:
+    """Return a 0..1 fade curve of length n."""
+
+    nn = int(n)
+    if nn <= 0:
+        return np.zeros((0,), dtype=np.float32)
+    if nn == 1:
+        return np.zeros((1,), dtype=np.float32)
+
+    s = str(shape or "linear").strip().lower()
+    t = np.linspace(0.0, 1.0, nn, dtype=np.float32)
+    if s in {"linear", "lin"}:
+        return t
+    if s in {"equal_power", "equalpower", "power"}:
+        return np.sin(0.5 * np.pi * t).astype(np.float32, copy=False)
+    if s in {"exponential", "exp"}:
+        return np.power(t, 2.2, dtype=np.float32).astype(np.float32, copy=False)
+    return t
 
 
 def _butter_filter(x: np.ndarray, sr: int, *, kind: str, cutoff_hz: float, order: int = 2) -> np.ndarray:
@@ -543,6 +580,7 @@ def _compressor(
     attack_ms: float,
     release_ms: float,
     makeup_db: float,
+    follower_mode: str = "peak",
 ) -> np.ndarray:
     """Feed-forward mono compressor with envelope follower."""
 
@@ -551,24 +589,31 @@ def _compressor(
 
     thr = float(threshold_db)
     r = float(max(1.0, ratio))
-    atk = max(0.5, float(attack_ms)) * 0.001
-    rel = max(1.0, float(release_ms)) * 0.001
-    atk_c = float(np.exp(-1.0 / (float(sr) * atk)))
-    rel_c = float(np.exp(-1.0 / (float(sr) * rel)))
+    c = coeffs_from_ms(sr=int(sr), attack_ms=float(attack_ms), release_ms=float(release_ms))
+    atk_c = float(c.attack_c)
+    rel_c = float(c.release_c)
 
     eps = 1e-9
     env = 0.0
     y = np.empty_like(x, dtype=np.float32)
 
+    mode = str(follower_mode or "peak").strip().lower()
+    rms_mode = mode == "rms"
+
     for i in range(x.size):
-        s = float(abs(x[i]))
-        # envelope follower (peak-ish)
+        sample = float(x[i])
+        s = float(abs(sample))
+        if rms_mode:
+            s = s * s
+
+        # envelope follower
         if s > env:
             env = atk_c * env + (1.0 - atk_c) * s
         else:
             env = rel_c * env + (1.0 - rel_c) * s
 
-        lvl_db = 20.0 * float(np.log10(env + eps))
+        env_view = float(np.sqrt(env)) if rms_mode else float(env)
+        lvl_db = 20.0 * float(np.log10(env_view + eps))
         if lvl_db <= thr:
             gain_db = 0.0
         else:
@@ -577,9 +622,76 @@ def _compressor(
             gain_db = compressed_db - lvl_db
 
         gain = float(10.0 ** ((gain_db + float(makeup_db)) / 20.0))
-        y[i] = float(x[i]) * gain
+        y[i] = sample * gain
 
     return y.astype(np.float32, copy=False)
+
+
+def _duck_bed_under_transients(x: np.ndarray, sr: int, params: PostProcessParams) -> np.ndarray:
+    amt = float(np.clip(float(getattr(params, "duck_bed_amount", 0.0)), 0.0, 1.0))
+    if x.size == 0 or not bool(getattr(params, "duck_bed", False)) or amt <= 1e-6:
+        return x.astype(np.float32, copy=False)
+
+    split = float(np.clip(float(getattr(params, "duck_bed_split_hz", 1800.0)), 200.0, 0.45 * float(sr)))
+    low = _butter_filter(x, sr, kind="lowpass", cutoff_hz=split, order=2)
+    high = (x - low).astype(np.float32, copy=False)
+
+    atk = float(getattr(params, "duck_bed_attack_ms", 2.0))
+    rel = float(getattr(params, "duck_bed_release_ms", 120.0))
+    c = coeffs_from_ms(sr=int(sr), attack_ms=atk, release_ms=rel)
+    atk_c = float(c.attack_c)
+    rel_c = float(c.release_c)
+
+    drive = np.abs(high).astype(np.float32, copy=False)
+    env = 0.0
+    env_out = np.empty_like(drive, dtype=np.float32)
+    for i in range(drive.size):
+        s = float(drive[i])
+        if s > env:
+            env = atk_c * env + (1.0 - atk_c) * s
+        else:
+            env = rel_c * env + (1.0 - rel_c) * s
+        env_out[i] = float(env)
+
+    emax = float(np.max(env_out)) if env_out.size else 0.0
+    if emax <= 1e-9:
+        return x.astype(np.float32, copy=False)
+
+    e = (env_out / emax).astype(np.float32, copy=False)
+    gain = (1.0 - amt * e).astype(np.float32, copy=False)
+    gain = np.clip(gain, 1.0 - amt, 1.0, out=gain)
+    return (high + low * gain).astype(np.float32, copy=False)
+
+
+_DEFAULT_POST_STACK: tuple[str, ...] = (
+    "trim",
+    "denoise",
+    "filters",
+    "multiband",
+    "formant",
+    "texture",
+    "transient",
+    "exciter",
+    "duck_bed",
+    "fade",
+    "compressor",
+    "reverb",
+    "loop_clean",
+    "normalize",
+    "limiter",
+    "final_clip",
+)
+
+
+def _parse_post_stack(stack: str | None) -> tuple[str, ...]:
+    if stack is None:
+        return _DEFAULT_POST_STACK
+    s = str(stack).strip()
+    if not s:
+        return _DEFAULT_POST_STACK
+    parts = [p.strip().lower() for p in s.split(",")]
+    parts = [p for p in parts if p]
+    return tuple(parts) if parts else _DEFAULT_POST_STACK
 
 
 def _spectral_denoise(x: np.ndarray, sr: int, *, strength: float) -> np.ndarray:
@@ -621,7 +733,7 @@ def _spectral_denoise(x: np.ndarray, sr: int, *, strength: float) -> np.ndarray:
     return y.astype(np.float32, copy=False)
 
 
-def _apply_loop_clean(y: np.ndarray, sr: int, *, crossfade_ms: int) -> np.ndarray:
+def _apply_loop_clean(y: np.ndarray, sr: int, *, crossfade_ms: int, curve: str) -> np.ndarray:
     """Reduce seam clicks when looping by blending the last window into the first.
 
     This is intentionally simple and robust for ambience: it keeps length the same and
@@ -650,7 +762,7 @@ def _apply_loop_clean(y: np.ndarray, sr: int, *, crossfade_ms: int) -> np.ndarra
 
     head = y[:n].astype(np.float32, copy=False)
     tail = y[-n:].astype(np.float32, copy=False)
-    fade = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    fade = _xfade_curve(n, shape=str(curve))
 
     # Blend tail into a time-reversed view of the head so that the very last sample
     # fades toward the very first sample (y[0]), making the loop boundary continuous.
@@ -683,99 +795,114 @@ def post_process_audio(x: np.ndarray, sr: int, params: PostProcessParams) -> tup
     trimmed = False
     y = x
 
-    if params.trim_silence:
-        start, end = _trim_silence_bounds(
-            y,
-            sr,
-            threshold_db=params.silence_threshold_db,
-            padding_ms=params.silence_padding_ms,
-        )
-        y = y[start:end]
-        trimmed = (start != 0) or (end != x.size)
+    stack = _parse_post_stack(getattr(params, "post_stack", None))
+    for block in stack:
+        if block == "trim":
+            if bool(getattr(params, "trim_silence", False)):
+                start, end = _trim_silence_bounds(
+                    y,
+                    sr,
+                    threshold_db=params.silence_threshold_db,
+                    padding_ms=params.silence_padding_ms,
+                )
+                y = y[start:end]
+                trimmed = (start != 0) or (end != x.size)
 
-    # Optional spectral denoise
-    if float(params.denoise_strength) > 0.0:
-        y = _spectral_denoise(y, sr, strength=float(params.denoise_strength))
+        elif block == "denoise":
+            if float(getattr(params, "denoise_strength", 0.0)) > 0.0:
+                y = _spectral_denoise(y, sr, strength=float(params.denoise_strength))
 
-    # Optional gentle EQ
-    if params.highpass_hz is not None:
-        y = _butter_filter(y, sr, kind="highpass", cutoff_hz=float(params.highpass_hz))
-    if params.lowpass_hz is not None:
-        y = _butter_filter(y, sr, kind="lowpass", cutoff_hz=float(params.lowpass_hz))
+        elif block == "filters":
+            if params.highpass_hz is not None:
+                y = _butter_filter(y, sr, kind="highpass", cutoff_hz=float(params.highpass_hz))
+            if params.lowpass_hz is not None:
+                y = _butter_filter(y, sr, kind="lowpass", cutoff_hz=float(params.lowpass_hz))
 
-    # Optional multi-band cleanup
-    y = _apply_multiband(y, sr, params)
+        elif block == "multiband":
+            y = _apply_multiband(y, sr, params)
 
-    # Optional formant-ish spectral warp
-    ff = _effective_formant_shift(params)
-    if abs(ff - 1.0) > 1e-6:
-        y = _formant_warp_stft(y, sr, factor=ff)
+        elif block == "formant":
+            ff = _effective_formant_shift(params)
+            if abs(ff - 1.0) > 1e-6:
+                y = _formant_warp_stft(y, sr, factor=ff)
 
-    # Optional texture overlay (hybrid granular-ish)
-    y = _apply_texture_overlay(y, sr, params, prompt_hint=(params.prompt_hint or None))
+        elif block == "texture":
+            y = _apply_texture_overlay(y, sr, params, prompt_hint=(params.prompt_hint or None))
 
-    # Optional transient shaping
-    if float(params.transient_amount) != 0.0 or float(getattr(params, "transient_sustain", 0.0)) != 0.0:
-        y = _transient_shaper_attack_sustain(
-            y,
-            sr,
-            attack=float(params.transient_amount),
-            sustain=float(getattr(params, "transient_sustain", 0.0)),
-            split_hz=float(params.transient_split_hz),
-        )
+        elif block == "transient":
+            if float(params.transient_amount) != 0.0 or float(getattr(params, "transient_sustain", 0.0)) != 0.0:
+                y = _transient_shaper_attack_sustain(
+                    y,
+                    sr,
+                    attack=float(params.transient_amount),
+                    sustain=float(getattr(params, "transient_sustain", 0.0)),
+                    split_hz=float(params.transient_split_hz),
+                )
 
-    # Optional exciter (before fade / dynamics)
-    if float(getattr(params, "exciter_amount", 0.0)) > 0.0:
-        y = _apply_exciter(
-            y,
-            sr,
-            amount=float(getattr(params, "exciter_amount", 0.0)),
-            cutoff_hz=float(getattr(params, "exciter_cutoff_hz", 2500.0)),
-        )
+        elif block == "exciter":
+            if float(getattr(params, "exciter_amount", 0.0)) > 0.0:
+                y = _apply_exciter(
+                    y,
+                    sr,
+                    amount=float(getattr(params, "exciter_amount", 0.0)),
+                    cutoff_hz=float(getattr(params, "exciter_cutoff_hz", 2500.0)),
+                )
 
-    # Fade to avoid clicks
-    y = _apply_fade(y, sr, fade_ms=int(params.fade_ms))
+        elif block == "duck_bed":
+            y = _duck_bed_under_transients(y, sr, params)
 
-    # Optional compression (before normalization)
-    if params.compressor_threshold_db is not None:
-        y = _compressor(
-            y,
-            sr,
-            threshold_db=float(params.compressor_threshold_db),
-            ratio=float(params.compressor_ratio),
-            attack_ms=float(params.compressor_attack_ms),
-            release_ms=float(params.compressor_release_ms),
-            makeup_db=float(params.compressor_makeup_db),
-        )
+        elif block == "fade":
+            y = _apply_fade(y, sr, fade_ms=int(params.fade_ms))
 
-    # Optional reverb (before normalization so overall loudness stays consistent)
-    y = _apply_reverb(y, sr, params)
+        elif block == "compressor":
+            if params.compressor_threshold_db is not None:
+                y = _compressor(
+                    y,
+                    sr,
+                    threshold_db=float(params.compressor_threshold_db),
+                    ratio=float(params.compressor_ratio),
+                    attack_ms=float(params.compressor_attack_ms),
+                    release_ms=float(params.compressor_release_ms),
+                    makeup_db=float(params.compressor_makeup_db),
+                    follower_mode=str(getattr(params, "compressor_follower_mode", "peak")),
+                )
 
-    # Optional loop cleaning (before normalization so output loudness stays consistent)
-    if bool(getattr(params, "loop_clean", False)):
-        y = _apply_loop_clean(y, sr, crossfade_ms=int(getattr(params, "loop_crossfade_ms", 100)))
+        elif block == "reverb":
+            y = _apply_reverb(y, sr, params)
 
-    # Loudness-ish normalization (RMS target) + safety peak cap.
-    if params.normalize_rms_db is not None:
-        target_rms = _db_to_amp(float(params.normalize_rms_db))
-        cur_rms = _rms(y)
-        if cur_rms > 0:
-            y = (y * (target_rms / cur_rms)).astype(np.float32, copy=False)
+        elif block == "loop_clean":
+            if bool(getattr(params, "loop_clean", False)):
+                y = _apply_loop_clean(
+                    y,
+                    sr,
+                    crossfade_ms=int(getattr(params, "loop_crossfade_ms", 100)),
+                    curve=str(getattr(params, "loop_crossfade_curve", "linear")),
+                )
 
-    # Peak cap to avoid clipping.
-    peak_target = _db_to_amp(float(params.normalize_peak_db))
-    cur_peak = _peak(y)
-    if cur_peak > 0:
-        scale = min(1.0, peak_target / cur_peak)
-        if scale != 1.0:
-            y = (y * scale).astype(np.float32, copy=False)
+        elif block == "normalize":
+            if params.normalize_rms_db is not None:
+                target_rms = _db_to_amp(float(params.normalize_rms_db))
+                cur_rms = _rms(y)
+                if cur_rms > 0:
+                    y = (y * (target_rms / cur_rms)).astype(np.float32, copy=False)
 
-    # Optional limiter at the end of the chain.
-    if params.limiter_ceiling_db is not None:
-        y = _soft_limit(y, ceiling_amp=_db_to_amp(float(params.limiter_ceiling_db)))
+            peak_target = _db_to_amp(float(params.normalize_peak_db))
+            cur_peak = _peak(y)
+            if cur_peak > 0:
+                scale = min(1.0, peak_target / cur_peak)
+                if scale != 1.0:
+                    y = (y * scale).astype(np.float32, copy=False)
 
-    # Hard clip as last resort (should be rare after scaling)
-    y = np.clip(y, -1.0, 1.0, out=y)
+        elif block == "limiter":
+            if params.limiter_ceiling_db is not None:
+                y = _soft_limit(y, ceiling_amp=_db_to_amp(float(params.limiter_ceiling_db)))
+
+        elif block == "final_clip":
+            y = np.clip(y, -1.0, 1.0, out=y)
+
+        else:
+            # Unknown block: ignore (keeps CLI/manifests forwards-compatible).
+            pass
 
     report = PostProcessReport(
         trimmed=trimmed,

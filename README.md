@@ -245,6 +245,11 @@ In addition to basic `--post` (trim/fade/normalize/EQ), you can enable a conserv
 - compression
 - soft limiting
 
+Optional advanced post steps:
+
+- loop seam curve shaping: `--loop-crossfade-curve {linear,equal_power,exponential}`
+- offline sidechain-style polish: `--duck-bed` (ducks low/mid bed under transients)
+
 ```powershell
 python -m soundgen.generate --engine layered --polish --prompt "melee hit" --seconds 1.0 --out outputs\hit_polished.wav
 ```
@@ -266,7 +271,7 @@ python -m soundgen.generate --engine layered --polish-profile foley_punchy --pro
 python -m soundgen.generate --engine diffusers --polish-profile ambience_loop_ready --prompt "cave ambience drone" --seconds 8 --seed 9 --post --out outputs\cave_loopy.wav
 
 # If you want to force loop seam cleanup without a profile:
-python -m soundgen.generate --engine synth --prompt "wind bed" --seconds 8 --post --loop --loop-crossfade-ms 100 --out outputs\wind_loop.wav
+python -m soundgen.generate --engine synth --prompt "wind bed" --seconds 8 --post --loop --loop-crossfade-ms 100 --loop-crossfade-curve equal_power --out outputs\wind_loop.wav
 ```
 
 In the Web UI (`python -m soundgen.web`), use the **polish profile** dropdown next to the post/polish toggles.

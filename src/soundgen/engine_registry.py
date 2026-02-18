@@ -138,6 +138,7 @@ def generate_wav(
     layered_tail_tilt: float = 0.0,
     layered_xfade_transient_to_body_ms: float = 0.0,
     layered_xfade_body_to_tail_ms: float = 0.0,
+    layered_xfade_curve_shape: str = "linear",
     layered_transient_hp_hz: float = 0.0,
     layered_transient_lp_hz: float = 0.0,
     layered_transient_drive: float = 0.0,
@@ -193,6 +194,29 @@ def generate_wav(
 
     out_wav = Path(out_wav)
     out_wav.parent.mkdir(parents=True, exist_ok=True)
+
+    from .analysis import compute_analysis
+
+    def _analysis_dict(x: np.ndarray, sr: int) -> dict[str, Any]:
+        rep = compute_analysis(
+            x,
+            int(sr),
+            normalize_peak_db=-1.0,
+            normalize_rms_db=-18.0,
+            true_peak_oversample=4,
+        )
+        return {
+            "sample_rate": int(rep.sample_rate),
+            "seconds": float(rep.seconds),
+            "peak": float(rep.peak),
+            "true_peak": float(rep.true_peak),
+            "rms": float(rep.rms),
+            "rms_dbfs": float(rep.rms_dbfs),
+            "crest_db": float(rep.crest_db),
+            "normalize_to_peak_factor": float(rep.normalize_to_peak_factor),
+            "normalize_to_rms_factor": float(rep.normalize_to_rms_factor),
+            "targets": {"peak_db": -1.0, "rms_db": -18.0},
+        }
 
     cand_n = int(candidates or 1)
     if cand_n < 1:
@@ -259,6 +283,7 @@ def generate_wav(
                 layered_tail_tilt=layered_tail_tilt,
                 layered_xfade_transient_to_body_ms=layered_xfade_transient_to_body_ms,
                 layered_xfade_body_to_tail_ms=layered_xfade_body_to_tail_ms,
+                layered_xfade_curve_shape=layered_xfade_curve_shape,
                 layered_transient_hp_hz=layered_transient_hp_hz,
                 layered_transient_lp_hz=layered_transient_lp_hz,
                 layered_transient_drive=layered_transient_drive,
@@ -313,6 +338,7 @@ def generate_wav(
             x, sr = read_wav_mono(wav_path)
             m = compute_metrics(x, sr)
             long_tail = detect_long_tail(x, sr)
+            a = _analysis_dict(x, sr)
 
             # Heuristic score: hard-avoid clipping, prefer healthy loudness and peaks near full-scale,
             # and lightly penalize long tails.
@@ -340,6 +366,7 @@ def generate_wav(
                 "long_tail": bool(long_tail),
                 "seconds": float(m.seconds),
                 "sample_rate": int(m.sample_rate),
+                "analysis": a,
             }
             return float(score), info
 
@@ -431,11 +458,13 @@ def generate_wav(
         if postprocess_fn is not None:
             audio, post_info = postprocess_fn(audio, sr)
         write_wav(out_wav, audio, sr)
+        merged = dict(res.credits_extra)
+        merged["analysis"] = _analysis_dict(audio, sr)
         return GeneratedWav(
             wav_path=out_wav,
             post_info=post_info,
             sources=tuple(res.sources),
-            credits_extra=dict(res.credits_extra),
+            credits_extra=merged,
         )
 
     if engine == "diffusers":
@@ -464,6 +493,7 @@ def generate_wav(
             "diffusers_multiband_mode": (str(gp.multiband_mode) if bool(gp.multiband) else None),
             "diffusers_multiband_low_hz": (float(gp.multiband_low_hz) if bool(gp.multiband) else None),
             "diffusers_multiband_high_hz": (float(gp.multiband_high_hz) if bool(gp.multiband) else None),
+            "analysis": _analysis_dict(audio, sr),
         }
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
@@ -500,6 +530,7 @@ def generate_wav(
             "stable_audio_lora_path": (str(sp.lora_path) if sp.lora_path else None),
             "stable_audio_lora_scale": (float(sp.lora_scale) if sp.lora_path else None),
             "stable_audio_lora_trigger": (str(sp.lora_trigger) if sp.lora_trigger else None),
+            "analysis": _analysis_dict(audio, sr),
         }
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
@@ -512,7 +543,13 @@ def generate_wav(
             a, sr = read_wav_mono(written)
             a, post_info = postprocess_fn(a, sr)
             write_wav(written, a, sr)
-        credits_extra = {"preset": preset, "rfxgen_path": str(rfxgen_path) if rfxgen_path else None}
+        # Analyze final audio (post-processed if applicable).
+        a2, sr2 = read_wav_mono(written)
+        credits_extra = {
+            "preset": preset,
+            "rfxgen_path": str(rfxgen_path) if rfxgen_path else None,
+            "analysis": _analysis_dict(a2, sr2),
+        }
         return GeneratedWav(wav_path=written, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     if engine == "samplelib":
@@ -546,7 +583,8 @@ def generate_wav(
             }
             for s in result.sources
         )
-        credits_extra = {"mix_count": int(sp.mix_count)}
+        a2, sr2 = read_wav_mono(written)
+        credits_extra = {"mix_count": int(sp.mix_count), "analysis": _analysis_dict(a2, sr2)}
         return GeneratedWav(wav_path=written, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     if engine == "replicate":
@@ -565,7 +603,10 @@ def generate_wav(
             a, sr = read_wav_mono(written)
             a, post_info = postprocess_fn(a, sr)
             write_wav(written, a, sr)
-        credits_extra = {"replicate_model": replicate_model}
+        credits_extra: dict[str, Any] = {"replicate_model": replicate_model}
+        if written.suffix.lower() == ".wav" and written.exists():
+            a2, sr2 = read_wav_mono(written)
+            credits_extra["analysis"] = _analysis_dict(a2, sr2)
         return GeneratedWav(wav_path=written, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     if engine == "synth":
@@ -593,7 +634,7 @@ def generate_wav(
         if postprocess_fn is not None:
             audio, post_info = postprocess_fn(audio, sr)
         write_wav(out_wav, audio, sr)
-        credits_extra = {"waveform": sp.waveform, "freq_hz": sp.freq_hz}
+        credits_extra = {"waveform": sp.waveform, "freq_hz": sp.freq_hz, "analysis": _analysis_dict(audio, sr)}
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     if engine == "layered":
@@ -615,6 +656,7 @@ def generate_wav(
             tail_tilt=float(layered_tail_tilt),
             xfade_transient_to_body_ms=float(layered_xfade_transient_to_body_ms),
             xfade_body_to_tail_ms=float(layered_xfade_body_to_tail_ms),
+            xfade_curve_shape=str(layered_xfade_curve_shape),
             transient_hp_hz=float(layered_transient_hp_hz),
             transient_lp_hz=float(layered_transient_lp_hz),
             transient_drive=float(layered_transient_drive),
@@ -681,6 +723,7 @@ def generate_wav(
         write_wav(out_wav, audio, sr)
         sources = tuple(res.sources)
         credits_extra = dict(res.credits_extra)
+        credits_extra["analysis"] = _analysis_dict(audio, sr)
         return GeneratedWav(wav_path=out_wav, post_info=post_info, sources=sources, credits_extra=credits_extra)
 
     raise ValueError(f"Unknown engine: {engine}")

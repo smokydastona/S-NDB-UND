@@ -113,6 +113,32 @@ def _ms_to_n(ms: float, sr: int) -> int:
     return max(0, int(round(float(ms) * 0.001 * int(sr))))
 
 
+def _xfade_windows(n: int, *, shape: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return (fade_out, fade_in) windows of length n."""
+
+    nn = int(n)
+    if nn <= 0:
+        z = np.zeros((0,), dtype=np.float32)
+        return z, z
+    if nn == 1:
+        return np.ones((1,), dtype=np.float32), np.zeros((1,), dtype=np.float32)
+
+    s = str(shape or "linear").strip().lower()
+    t = np.linspace(0.0, 1.0, nn, dtype=np.float32)
+
+    if s in {"equal_power", "equalpower", "power"}:
+        fade_in = np.sin(0.5 * np.pi * t).astype(np.float32, copy=False)
+        fade_out = np.cos(0.5 * np.pi * t).astype(np.float32, copy=False)
+        return fade_out, fade_in
+
+    if s in {"exponential", "exp"}:
+        fade_in = np.power(t, 2.2, dtype=np.float32).astype(np.float32, copy=False)
+    else:
+        fade_in = t
+    fade_out = (1.0 - fade_in).astype(np.float32, copy=False)
+    return fade_out, fade_in
+
+
 def _sidechain_duck_gain(
     transient_full: np.ndarray,
     *,
@@ -417,6 +443,7 @@ class LayeredParams:
     # 0 disables and preserves the legacy "just add layers" behavior.
     xfade_transient_to_body_ms: float = 0.0
     xfade_body_to_tail_ms: float = 0.0
+    xfade_curve_shape: str = "linear"  # linear|equal_power|exponential
 
     # layer gains
     transient_gain: float = 0.90
@@ -929,8 +956,9 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
     if tb_n > 1:
         tb_n = min(tb_n, n)
         # Fade transient down while body comes up.
-        transient_full[:tb_n] *= np.linspace(1.0, 0.0, tb_n, dtype=np.float32)
-        body_full[:tb_n] *= np.linspace(0.0, 1.0, tb_n, dtype=np.float32)
+        tb_out, tb_in = _xfade_windows(tb_n, shape=str(params.xfade_curve_shape))
+        transient_full[:tb_n] *= tb_out
+        body_full[:tb_n] *= tb_in
 
     bt_n = _ms_to_n(float(params.xfade_body_to_tail_ms), sr)
     if bt_n > 1 and tail_full.any():
@@ -940,9 +968,10 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
         bt_n = min(bt_n, n - start)
         if bt_n > 1:
             # Fade body out as tail comes in.
-            body_full[start : start + bt_n] *= np.linspace(1.0, 0.0, bt_n, dtype=np.float32)
+            bt_out, bt_in = _xfade_windows(bt_n, shape=str(params.xfade_curve_shape))
+            body_full[start : start + bt_n] *= bt_out
             body_full[start + bt_n :] *= 0.0
-            tail_full[start : start + bt_n] *= np.linspace(0.0, 1.0, bt_n, dtype=np.float32)
+            tail_full[start : start + bt_n] *= bt_in
 
     x = (transient_full + body_full + tail_full).astype(np.float32, copy=False)
 
@@ -971,6 +1000,7 @@ def generate_with_layered(params: LayeredParams) -> LayeredResult:
                 "transient_to_body": float(params.xfade_transient_to_body_ms),
                 "body_to_tail": float(params.xfade_body_to_tail_ms),
             },
+            "xfade_curve_shape": str(params.xfade_curve_shape),
             "gains": {
                 "transient": float(params.transient_gain),
                 "body": float(params.body_gain),

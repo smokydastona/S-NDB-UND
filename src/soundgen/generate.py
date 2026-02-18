@@ -297,6 +297,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Loop-clean crossfade window in milliseconds (default 100).",
     )
     p.add_argument(
+        "--loop-crossfade-curve",
+        choices=["linear", "equal_power", "exponential"],
+        default="linear",
+        help="Loop-clean crossfade curve shape (linear/equal_power/exponential).",
+    )
+    p.add_argument(
         "--normalize-rms-db",
         type=float,
         default=-18.0,
@@ -428,6 +434,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override compressor release (ms) for polish mode (omit to use defaults).",
     )
+    p.add_argument(
+        "--compressor-follower-mode",
+        choices=["peak", "rms"],
+        default="peak",
+        help="Advanced: compressor detector mode (peak or RMS-ish).",
+    )
+
+    # Advanced polish (optional)
+    p.add_argument(
+        "--duck-bed",
+        action="store_true",
+        help="Advanced: duck low/mid bed under transients (offline sidechain-style; post).",
+    )
+    p.add_argument("--duck-bed-split-hz", type=float, default=1800.0, help="Duck split frequency (Hz).")
+    p.add_argument("--duck-bed-amount", type=float, default=0.35, help="Duck amount (0..1).")
+    p.add_argument("--duck-bed-attack-ms", type=float, default=2.0, help="Duck attack (ms).")
+    p.add_argument("--duck-bed-release-ms", type=float, default=120.0, help="Duck release (ms).")
+    p.add_argument(
+        "--post-stack",
+        default=None,
+        help="Advanced: override post chain ordering (comma-separated block keys).",
+    )
 
     # Synth engine (DSP) controls
     p.add_argument("--synth-waveform", default="sine", help="synth waveform: sine|square|saw|triangle|noise")
@@ -485,6 +513,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="Layered: crossfade body→tail (ms). 0 disables (legacy add-layers).",
+    )
+    p.add_argument(
+        "--layered-xfade-curve",
+        choices=["linear", "equal_power", "exponential"],
+        default="linear",
+        help="Layered: crossfade curve shape (linear/equal_power/exponential).",
     )
 
     # Layered per-layer FX (optional). 0 disables.
@@ -744,6 +778,15 @@ def main(argv: list[str] | None = None) -> int:
             limiter_ceiling_db=(float(limiter) if limiter is not None else None),
             loop_clean=bool(getattr(args, "loop", False)),
             loop_crossfade_ms=int(getattr(args, "loop_crossfade_ms", 100)),
+            loop_crossfade_curve=str(getattr(args, "loop_crossfade_curve", "linear")),
+
+            duck_bed=bool(getattr(args, "duck_bed", False)),
+            duck_bed_split_hz=float(getattr(args, "duck_bed_split_hz", 1800.0)),
+            duck_bed_amount=float(getattr(args, "duck_bed_amount", 0.35)),
+            duck_bed_attack_ms=float(getattr(args, "duck_bed_attack_ms", 2.0)),
+            duck_bed_release_ms=float(getattr(args, "duck_bed_release_ms", 120.0)),
+            post_stack=(str(args.post_stack) if getattr(args, "post_stack", None) else None),
+            compressor_follower_mode=str(getattr(args, "compressor_follower_mode", "peak")),
         )
 
     def _qa_info(audio: np.ndarray, sr: int) -> str:
@@ -966,6 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
             layered_tail_tilt=float(args.layered_tail_tilt),
             layered_xfade_transient_to_body_ms=float(args.layered_xfade_transient_to_body_ms),
             layered_xfade_body_to_tail_ms=float(args.layered_xfade_body_to_tail_ms),
+            layered_xfade_curve_shape=str(getattr(args, "layered_xfade_curve", "linear")),
             layered_transient_hp_hz=float(args.layered_transient_hp_hz),
             layered_transient_lp_hz=float(args.layered_transient_lp_hz),
             layered_transient_drive=float(args.layered_transient_drive),
