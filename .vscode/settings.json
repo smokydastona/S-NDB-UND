@@ -1,4 +1,5 @@
 {
   "powershell.scriptAnalysis.enable": true,
-  "powershell.scriptAnalysis.settingsPath": "PSScriptAnalyzerSettings.psd1"
+  "powershell.scriptAnalysis.settingsPath": "PSScriptAnalyzerSettings.psd1",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/native/pluginhost/build/compile_commands.json"
 }

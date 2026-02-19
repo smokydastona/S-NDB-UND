@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('soundgenEditor', {
 
   pickClapPluginDialog: () => ipcRenderer.invoke('editor:pickClapPluginDialog'),
   pickLv2BundleDialog: () => ipcRenderer.invoke('editor:pickLv2BundleDialog'),
+  clapListPlugins: (payload) => ipcRenderer.invoke('editor:clapListPlugins', payload || {}),
   clapRenderPreview: (payload) => ipcRenderer.invoke('editor:clapRenderPreview', payload || {}),
 
   editopsInit: (inPath) => ipcRenderer.invoke('editor:editopsInit', String(inPath || '')),

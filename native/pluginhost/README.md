@@ -31,8 +31,9 @@ The executable should land at:
 - `soundgen_pluginhost scan`
   - Prints JSON with discovered CLAP/LV2 paths.
 
-- `soundgen_pluginhost clap-render --plugin <path> --in <wav> --out <wav>`
-  - Renders mono WAV through the **first** plugin in the CLAP library.
+- `soundgen_pluginhost clap-render --plugin <path> [--plugin-id <id> | --plugin-index <n>] --in <wav> --out <wav>`
+  - Renders mono WAV through the selected plugin in the CLAP library.
+  - If not specified, defaults to the **first** plugin.
   - For now, it only supports plugins with **one stereo or mono audio in/out** pair and no params.
 
 ## Environment variables

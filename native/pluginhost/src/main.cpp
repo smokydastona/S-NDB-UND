@@ -415,7 +415,11 @@ static int cmd_clap_list(const fs::path& pluginPath) {
 }
 
 // NOTE: this is intentionally limited; it aims to support common simple FX.
-static int cmd_clap_render(const fs::path& pluginPath, const fs::path& inWav, const fs::path& outWav) {
+static int cmd_clap_render(const fs::path& pluginPath,
+                           const std::optional<std::string>& pluginId,
+                           const std::optional<int>& pluginIndex,
+                           const fs::path& inWav,
+                           const fs::path& outWav) {
   std::string err;
   WavData wav;
   if (!read_wav_pcm16(inWav, wav, err)) {
@@ -454,8 +458,32 @@ static int cmd_clap_render(const fs::path& pluginPath, const fs::path& inWav, co
     return 2;
   }
 
-  // Use the first plugin in the library.
-  const auto* desc = clap_get_desc(lib, 0);
+  int chosenIndex = 0;
+  if (pluginIndex) {
+    chosenIndex = *pluginIndex;
+  }
+  if (chosenIndex < 0 || chosenIndex >= n) {
+    std::cout << "{\"ok\":false,\"error\":\"plugin index out of range\"}" << std::endl;
+    return 2;
+  }
+
+  if (pluginId && !pluginId->empty()) {
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+      const auto* d = clap_get_desc(lib, i);
+      if (d && d->id && *pluginId == std::string(d->id)) {
+        chosenIndex = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      std::cout << "{\"ok\":false,\"error\":\"plugin id not found\"}" << std::endl;
+      return 2;
+    }
+  }
+
+  const auto* desc = clap_get_desc(lib, chosenIndex);
   if (!desc || !desc->id) {
     std::cout << "{\"ok\":false,\"error\":\"invalid plugin descriptor\"}" << std::endl;
     return 2;
@@ -577,7 +605,7 @@ static void usage() {
   std::cerr << "soundgen_pluginhost commands:\n";
   std::cerr << "  scan\n";
   std::cerr << "  clap-list --plugin <path>\n";
-  std::cerr << "  clap-render --plugin <path> --in <wav> --out <wav>\n";
+  std::cerr << "  clap-render --plugin <path> [--plugin-id <id> | --plugin-index <n>] --in <wav> --out <wav>\n";
 }
 
 static std::optional<std::string> arg_value(int& i, int argc, char** argv) {
@@ -612,11 +640,24 @@ int main(int argc, char** argv) {
 
   if (cmd == "clap-render") {
     std::optional<std::string> plugin;
+    std::optional<std::string> pluginId;
+    std::optional<int> pluginIndex;
     std::optional<std::string> in;
     std::optional<std::string> out;
     for (int i = 2; i < argc; i++) {
       std::string a(argv[i]);
       if (a == "--plugin") plugin = arg_value(i, argc, argv);
+      else if (a == "--plugin-id") pluginId = arg_value(i, argc, argv);
+      else if (a == "--plugin-index") {
+        if (auto v = arg_value(i, argc, argv)) {
+          try {
+            pluginIndex = std::stoi(*v);
+          } catch (...) {
+            std::cout << "{\"ok\":false,\"error\":\"invalid plugin index\"}" << std::endl;
+            return 2;
+          }
+        }
+      }
       else if (a == "--in") in = arg_value(i, argc, argv);
       else if (a == "--out") out = arg_value(i, argc, argv);
     }
@@ -624,7 +665,7 @@ int main(int argc, char** argv) {
       usage();
       return 2;
     }
-    return cmd_clap_render(fs::path(*plugin), fs::path(*in), fs::path(*out));
+    return cmd_clap_render(fs::path(*plugin), pluginId, pluginIndex, fs::path(*in), fs::path(*out));
   }
 
   usage();

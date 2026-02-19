@@ -40,6 +40,7 @@ const state = {
   samples: null,
   plugins: {
     clapPath: null,
+    clapPluginId: null,
     lv2BundlePath: null,
   },
   preview: {
@@ -226,6 +227,11 @@ async function ensurePluginPreviewReady() {
     return false;
   }
 
+  if (!state.plugins.clapPluginId) {
+    setStatus('Preview enabled, but no CLAP plugin is selected.');
+    return false;
+  }
+
   if (state.preview.audioBuffer && state.preview.forWavPath === state.currentWavPath) {
     return true;
   }
@@ -240,6 +246,7 @@ async function ensurePluginPreviewReady() {
       inWav: state.currentWavPath,
       outWav,
       pluginPath: state.plugins.clapPath,
+      pluginId: state.plugins.clapPluginId,
     });
     await loadPreviewFromWavPath(outWav, state.currentWavPath);
     setStatus('');
@@ -536,9 +543,39 @@ if (ui.loadClapBtn) {
       const p = await soundgenEditor.pickClapPluginDialog();
       if (!p) return;
       state.plugins.clapPath = p;
+      state.plugins.clapPluginId = null;
       state.plugins.lv2BundlePath = null;
       invalidatePluginPreview();
-      setStatus(`Loaded CLAP: ${shortPath(p)} (preview uses first plugin in library)`);
+
+      const list = await soundgenEditor.clapListPlugins({ pluginPath: p });
+      const plugins = Array.isArray(list.plugins) ? list.plugins : [];
+      if (!plugins.length) {
+        setStatus('CLAP loaded, but no plugin descriptors were found.');
+        return;
+      }
+
+      if (plugins.length === 1) {
+        state.plugins.clapPluginId = String(plugins[0].id || '');
+        setStatus(`Loaded CLAP: ${shortPath(p)} | Plugin: ${plugins[0].name || plugins[0].id || '0'}`);
+        return;
+      }
+
+      const lines = plugins.map((pl, i) => `${i}: ${pl.name || pl.id || '(unnamed)'}${pl.id ? ` [${pl.id}]` : ''}`);
+      const idxRaw = prompt(
+        `This .clap contains multiple plugins. Pick one by number:\n\n${lines.join('\n')}\n\nEnter index:`,
+        '0'
+      );
+      if (idxRaw == null) {
+        setStatus('CLAP loaded. Plugin selection canceled.');
+        return;
+      }
+      const idx = parseInt(String(idxRaw).trim(), 10);
+      if (!isFinite(idx) || idx < 0 || idx >= plugins.length) {
+        setStatus('Invalid plugin index.');
+        return;
+      }
+      state.plugins.clapPluginId = String(plugins[idx].id || '');
+      setStatus(`Loaded CLAP: ${shortPath(p)} | Plugin: ${plugins[idx].name || plugins[idx].id || String(idx)}`);
     } catch (e) {
       setStatus(String(e && e.message ? e.message : e));
     }
@@ -552,6 +589,7 @@ if (ui.loadLv2Btn) {
       if (!p) return;
       state.plugins.lv2BundlePath = p;
       state.plugins.clapPath = null;
+      state.plugins.clapPluginId = null;
       invalidatePluginPreview();
       setStatus(`Loaded LV2: ${shortPath(p)} (preview not implemented yet)`);
     } catch (e) {

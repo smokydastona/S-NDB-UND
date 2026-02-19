@@ -115,6 +115,16 @@ function runPluginhost(args, opts = {}) {
   });
 }
 
+function parseJsonBestEffort(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
+}
+
 function isTrayEnabled() {
   const raw = String(process.env.SOUNDGEN_TRAY || '').trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
@@ -747,23 +757,35 @@ function registerEditorIpc() {
     return String(filePaths[0]);
   });
 
+  ipcMain.handle('editor:clapListPlugins', async (_evt, payload) => {
+    const pluginPath = String(payload?.pluginPath || '');
+    if (!pluginPath) throw new Error('clapListPlugins requires {pluginPath}');
+    const res = await runPluginhost(['clap-list', '--plugin', pluginPath]);
+    const obj = parseJsonBestEffort(res.stdout);
+    if (!obj) throw new Error('clap-list returned invalid JSON');
+    if (obj.ok === false) throw new Error(String(obj.error || 'clap-list failed'));
+    return obj;
+  });
+
   ipcMain.handle('editor:clapRenderPreview', async (_evt, payload) => {
     const inWav = String(payload?.inWav || '');
     const outWav = String(payload?.outWav || '');
     const pluginPath = String(payload?.pluginPath || '');
+    const pluginId = payload?.pluginId != null ? String(payload.pluginId) : '';
     if (!inWav || !outWav || !pluginPath) {
       throw new Error('clapRenderPreview requires {inWav,outWav,pluginPath}');
     }
 
-    await runPluginhost([
+    const args = [
       'clap-render',
       '--plugin',
       pluginPath,
-      '--in',
-      inWav,
-      '--out',
-      outWav
-    ]);
+    ];
+    if (pluginId) {
+      args.push('--plugin-id', pluginId);
+    }
+    args.push('--in', inWav, '--out', outWav);
+    await runPluginhost(args);
 
     return { outWav };
   });
