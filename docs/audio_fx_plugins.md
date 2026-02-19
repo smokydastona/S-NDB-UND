@@ -44,11 +44,17 @@ Why it matters:
 - x42 Plugins (LV2): https://github.com/x42
   - High-quality LV2 plugins (EQ, compressors, meters)
 
+- x42 meters.lv2 (LV2): https://github.com/x42/meters.lv2
+  - Metering suite (useful for host validation + UI expectations)
+
 - CALF Studio Gear (LV2 + LADSPA): https://github.com/calf-studio-gear/calf
   - Large suite of effects and synths
 
 - ZamAudio (LV2): https://github.com/zamaudio
   - Mixing/mastering plugins (compressors, EQs)
+
+- ZamAudio zam-plugins (LV2): https://github.com/zamaudio/zam-plugins
+  - Main ZamAudio plugin bundle repository
 
 - Airwindows (mostly VST; DSP concepts still valuable): https://github.com/airwindows/airwindows
   - Hundreds of minimalist DSP plugins; great learning resource
