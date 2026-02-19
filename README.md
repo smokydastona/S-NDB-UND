@@ -1,3 +1,5 @@
+![SÖNDBÖUND banner](.examples/Banner.png)
+
 # SÖNDBÖUND — game-audio sound generator (Prompt → SFX WAV)
 
 [![Build EXE](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml/badge.svg)](https://github.com/smokydastona/S-NDB-UND/actions/workflows/build-exe.yml)
