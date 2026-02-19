@@ -27,6 +27,88 @@ _CURATED_DOCS: list[ContextDoc] = [
 ]
 
 
+_RAG_DOC_GLOBS: list[str] = [
+    "docs/**/*.md",
+]
+
+
+_RAG_CODE_RELS: list[str] = [
+    # Core entrypoints / pipelines
+    "src/soundgen/generate.py",
+    "src/soundgen/batch.py",
+    "src/soundgen/web_control_panel.py",
+    "src/soundgen/web.py",
+    "src/soundgen/desktop.py",
+    "src/soundgen/app.py",
+
+    # Export, formats, QA/post
+    "src/soundgen/minecraft.py",
+    "src/soundgen/io_utils.py",
+    "src/soundgen/postprocess.py",
+    "src/soundgen/qa.py",
+
+    # Project + manifest schemas
+    "src/soundgen/project.py",
+    "src/soundgen/manifest.py",
+
+    # Engines registry
+    "src/soundgen/engine_registry.py",
+]
+
+
+def _is_reasonable_context_file(rel_path: str) -> bool:
+    rp = str(rel_path).replace("\\", "/").lstrip("/")
+    # Avoid including generated / huge / irrelevant directories.
+    bad_prefixes = (
+        "outputs/",
+        "resourcepack/",
+        "pre_gen_sound/",
+        "tools/",
+        "library/",
+        "soundpack_v1/",
+        ".git/",
+        "electron/",
+    )
+    if rp.startswith(bad_prefixes):
+        return False
+    return True
+
+
+def _iter_rag_candidates(root: Path) -> list[tuple[str, Path, float]]:
+    """Return list of (rel_path, abs_path, weight)"""
+
+    items: list[tuple[str, Path, float]] = []
+
+    # Docs (broad scan).
+    for g in _RAG_DOC_GLOBS:
+        for p in root.glob(g):
+            try:
+                rel = str(p.relative_to(root)).replace("\\", "/")
+            except Exception:
+                continue
+            if not _is_reasonable_context_file(rel):
+                continue
+            items.append((rel, p, 1.0))
+
+    # Key code modules (explicit list).
+    for rel in _RAG_CODE_RELS:
+        p = root / rel
+        if p.exists() and p.is_file():
+            rp = str(rel).replace("\\", "/")
+            if _is_reasonable_context_file(rp):
+                items.append((rp, p, 1.15))
+
+    # Deduplicate by rel path.
+    out: list[tuple[str, Path, float]] = []
+    seen: set[str] = set()
+    for rel, p, w in items:
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append((rel, p, w))
+    return out
+
+
 _APP_FACTS = (
     "SÖNDBÖUND app facts (authoritative):\n"
     "- Project type: Python (src-layout) prompt→SFX generator for Minecraft-ready audio packs.\n"
@@ -192,6 +274,36 @@ def build_app_context(
         excerpt = _excerpt_around_terms(best_text, terms, max_chars=per_doc_max_chars)
         candidates.append((s, doc.rel_path, excerpt))
 
+    # Optional lightweight local RAG: scan docs/ + key modules and pull top snippets.
+    scan_enabled = str(os.environ.get("SOUNDGEN_AI_CONTEXT_SCAN", "1")).strip().lower() not in {"0", "false", "off", "no"}
+    if scan_enabled and terms:
+        # Only scan the first repo root that looks like a dev checkout.
+        scan_root = None
+        for r in roots:
+            try:
+                if (r / "src" / "soundgen").exists() or (r / "docs").exists():
+                    scan_root = r
+                    break
+            except Exception:
+                continue
+
+        if scan_root is not None:
+            rag_items = _iter_rag_candidates(scan_root)
+            # Keep scan bounded for responsiveness.
+            max_files = 40
+            per_file_read = max(6000, int(per_doc_max_chars * 2))
+
+            for rel, p, weight in rag_items[:max_files]:
+                txt = _read_text_best_effort(p, max_chars=per_file_read)
+                if not txt:
+                    continue
+                s = _score_text(txt, terms) * float(weight)
+                if s <= 0.0:
+                    continue
+                excerpt = _excerpt_around_terms(txt, terms, max_chars=per_doc_max_chars)
+                # Mark these differently so we can prioritize curated docs.
+                candidates.append((s, rel, excerpt))
+
     # Pick top docs by score.
     candidates.sort(key=lambda x: x[0], reverse=True)
 
@@ -210,7 +322,7 @@ def build_app_context(
             continue
         picked.append((s, rel, ex))
         seen_paths.add(rel)
-        if len(picked) >= 6:
+        if len(picked) >= 10:
             break
 
     parts: list[str] = []
