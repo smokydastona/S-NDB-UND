@@ -1369,6 +1369,7 @@ def launch_editor(wav_path: str | Path) -> None:
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp_wav = Path(f.name)
+        tmp_credits = tmp_wav.with_name(tmp_wav.name + ".credits.json")
 
         try:
             res = generate_wav(
@@ -1384,6 +1385,10 @@ def launch_editor(wav_path: str | Path) -> None:
         finally:
             try:
                 tmp_wav.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                tmp_credits.unlink(missing_ok=True)
             except Exception:
                 pass
 
