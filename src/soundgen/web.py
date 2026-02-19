@@ -132,6 +132,13 @@ def _ui_project_load(project_root: str) -> tuple[dict[str, Any] | None, list[lis
         from .project import load_project
 
         proj = load_project(root)
+    except FileNotFoundError:
+        expected = root / "sndbund_project.json"
+        hint = (
+            "Project not initialized in this folder. Create one with:\n"
+            f"  SÖNDBÖUND.exe project create --root \"{root}\" --id myproj --namespace mymod\n"
+        )
+        return {"error": "Project not initialized", "root": str(root), "expected": str(expected), "hint": hint}, []
     except Exception as e:
         return {"error": str(e), "root": str(root)}, []
 

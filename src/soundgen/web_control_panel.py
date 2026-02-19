@@ -255,6 +255,22 @@ def _ui_project_load(project_root: str):
         from .project import load_project
 
         proj = load_project(root)
+    except FileNotFoundError:
+        expected = root / "sndbund_project.json"
+        hint = (
+            "No project found in this folder yet.\n\n"
+            "Create one with:\n"
+            f"  SÖNDBÖUND.exe project create --root \"{root}\" --id myproj --namespace mymod\n\n"
+            "Then click 'Load project' again."
+        )
+        stub = {
+            "error": "Project not initialized",
+            "root": str(root),
+            "expected": str(expected),
+            "hint": hint,
+            "items": [],
+        }
+        return stub, [], gr.update(choices=[], value=None), hint
     except Exception as e:
         return {"error": str(e), "root": str(root)}, [], gr.update(choices=[], value=None), f"Load failed: {e}"
 
