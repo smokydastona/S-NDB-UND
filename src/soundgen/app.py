@@ -62,6 +62,7 @@ def _print_help() -> None:
         "  SÖNDBÖUND.exe project <args>   (Project system: track versions + export packs)\n"
         "  SÖNDBÖUND.exe mobset <args>    (Minecraft mob soundset generator)\n"
         "  SÖNDBÖUND.exe edit <wav>       (Built-in destructive editor)\n"
+        "  SÖNDBÖUND.exe editops <args>   (Editor backend ops; for Electron)\n"
         "  SÖNDBÖUND.exe regions <args>   (Editor region tools: export regions non-interactively)\n"
         "  SÖNDBÖUND.exe loop <args>      (Loop suite: auto loop points, tail trim, noise bed helpers)\n\n"
         "Help:\n"
@@ -70,6 +71,7 @@ def _print_help() -> None:
         "  SÖNDBÖUND.exe generate --help\n"
         "  SÖNDBÖUND.exe finetune --help\n"
         "  SÖNDBÖUND.exe edit --help\n"
+        "  SÖNDBÖUND.exe editops --help\n"
         "  SÖNDBÖUND.exe regions --help\n"
         "  SÖNDBÖUND.exe loop --help\n"
     )
@@ -252,6 +254,11 @@ def main(argv: list[str] | None = None) -> int:
 
         launch_editor(rest[0])
         return 0
+
+    if cmd == "editops":
+        from .editops import main as editops_main
+
+        return int(editops_main(rest) or 0)
 
     if cmd == "regions":
         from .editor_regions import main as regions_main

@@ -1,10 +1,11 @@
-const { app, BrowserWindow, Menu, dialog, crashReporter, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, dialog, crashReporter, Tray, nativeImage, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 let backendProc = null;
 let mainWindow = null;
+let editorWindow = null;
 let isQuitting = false;
 let backendLogStream = null;
 let backendRestartTimer = null;
@@ -636,10 +637,161 @@ function createMenu() {
         { type: 'separator' },
         { role: 'quit' }
       ]
+    },
+    {
+      label: 'Editor',
+      submenu: [
+        {
+          label: 'Open Editor',
+          click: () => {
+            createEditorWindow().catch((e) => logLine('[editor] open failed: ' + (e && e.stack ? e.stack : e)));
+          }
+        }
+      ]
     }
   ];
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+}
+
+function parseJsonLine(stdout) {
+  const t = String(stdout || '').trim();
+  if (!t) return null;
+  // editops prints a single JSON object.
+  try { return JSON.parse(t); } catch { return null; }
+}
+
+function registerEditorIpc() {
+  if (registerEditorIpc.didRegister) return;
+  registerEditorIpc.didRegister = true;
+
+  ipcMain.handle('editor:openWavDialog', async () => {
+    const res = await dialog.showOpenDialog({
+      title: 'Open WAV',
+      properties: ['openFile'],
+      filters: [{ name: 'WAV', extensions: ['wav'] }]
+    });
+    if (res.canceled || !res.filePaths || !res.filePaths[0]) return null;
+    return String(res.filePaths[0]);
+  });
+
+  ipcMain.handle('editor:saveWavDialog', async () => {
+    const res = await dialog.showSaveDialog({
+      title: 'Export WAV',
+      filters: [{ name: 'WAV', extensions: ['wav'] }]
+    });
+    if (res.canceled || !res.filePath) return null;
+    return String(res.filePath);
+  });
+
+  ipcMain.handle('editor:readFileBase64', async (_ev, filePath) => {
+    const p = String(filePath || '');
+    const buf = fs.readFileSync(p);
+    return buf.toString('base64');
+  });
+
+  ipcMain.handle('editor:editopsInit', async (_ev, inPath) => {
+    const res = await runBackendOnce(['editops', 'init', '--in', String(inPath || '')], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops init returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsInfo', async (_ev, sessionId) => {
+    const res = await runBackendOnce(['editops', 'info', '--session', String(sessionId || '')], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops info returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsOp', async (_ev, payload) => {
+    const p = payload || {};
+    const sessionId = String(p.sessionId || '');
+    const type = String(p.type || '');
+    const args = ['editops', 'op', '--session', sessionId, '--type', type];
+    if (p.start != null && p.end != null) {
+      args.push('--start', String(p.start));
+      args.push('--end', String(p.end));
+    }
+
+    if (type === 'fade') {
+      args.push('--fade-mode', String(p.fadeMode || 'in'));
+      args.push('--fade-ms', String(p.fadeMs != null ? p.fadeMs : 30.0));
+    }
+    if (type === 'normalize') {
+      args.push('--normalize-peak-db', String(p.normalizePeakDb != null ? p.normalizePeakDb : -1.0));
+    }
+    if (type === 'pitch') {
+      args.push('--pitch-semitones', String(p.pitchSemitones != null ? p.pitchSemitones : 0.0));
+    }
+    if (type === 'eq3') {
+      args.push('--eq-low-cut-hz', String(p.eqLowCutHz != null ? p.eqLowCutHz : 80.0));
+      args.push('--eq-mid-freq-hz', String(p.eqMidFreqHz != null ? p.eqMidFreqHz : 1200.0));
+      args.push('--eq-mid-gain-db', String(p.eqMidGainDb != null ? p.eqMidGainDb : 0.0));
+      args.push('--eq-mid-q', String(p.eqMidQ != null ? p.eqMidQ : 1.0));
+      args.push('--eq-high-cut-hz', String(p.eqHighCutHz != null ? p.eqHighCutHz : 16000.0));
+    }
+
+    const res = await runBackendOnce(args, { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops op returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsUndo', async (_ev, sessionId) => {
+    const res = await runBackendOnce(['editops', 'undo', '--session', String(sessionId || '')], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops undo returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsRedo', async (_ev, sessionId) => {
+    const res = await runBackendOnce(['editops', 'redo', '--session', String(sessionId || '')], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops redo returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsExport', async (_ev, payload) => {
+    const sessionId = String(payload && payload.sessionId ? payload.sessionId : '');
+    const outPath = String(payload && payload.outPath ? payload.outPath : '');
+    const res = await runBackendOnce(['editops', 'export', '--session', sessionId, '--out', outPath], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    if (!obj) throw new Error('editops export returned invalid JSON');
+    return obj;
+  });
+
+  ipcMain.handle('editor:editopsClose', async (_ev, sessionId) => {
+    const res = await runBackendOnce(['editops', 'close', '--session', String(sessionId || '')], { timeoutMs: 120000 });
+    const obj = parseJsonLine(res.stdout);
+    return obj || { ok: true };
+  });
+}
+
+async function createEditorWindow() {
+  registerEditorIpc();
+
+  if (editorWindow && !editorWindow.isDestroyed()) {
+    editorWindow.show();
+    editorWindow.focus();
+    return;
+  }
+
+  editorWindow = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    show: true,
+    title: 'SÖNDBÖUND — Editor',
+    webPreferences: {
+      preload: path.join(__dirname, 'editor', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  await editorWindow.loadFile(path.join(__dirname, 'editor', 'index.html'));
+  editorWindow.on('closed', () => { editorWindow = null; });
 }
 
 async function createWindow() {

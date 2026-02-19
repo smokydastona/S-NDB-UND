@@ -38,7 +38,8 @@
     },
     "files": [
       "main.js",
-      "package.json"
+      "package.json",
+      "editor/**"
     ],
     "extraResources": [
       {
