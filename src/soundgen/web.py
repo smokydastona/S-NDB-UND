@@ -29,6 +29,163 @@ from .fx_chains import FX_CHAINS, fx_chain_keys, load_fx_chain_json
 from .runtime_config import user_configs_dir
 
 
+_WORKFLOW_PRESETS_LEGACY: dict[str, dict[str, object]] = {
+    "(none)": {},
+    "Creature SFX": {"engine": "diffusers", "seconds": 2.0, "candidates": 1, "post": True, "polish": True},
+    "UI/Tech Sounds": {"engine": "rfxgen", "seconds": 0.4, "candidates": 1, "post": True, "polish": False},
+    "Foley": {"engine": "layered", "seconds": 2.5, "candidates": 1, "post": True, "polish": True},
+}
+
+
+def _ui_mode_visibility_legacy(mode_label: str) -> tuple[dict, dict, dict, dict, dict, dict]:
+    m = str(mode_label or "Basic").strip().lower()
+    is_basic = m.startswith("basic")
+    is_advanced = m.startswith("advanced")
+    is_pro = m.startswith("pro")
+
+    show_adv = bool(is_advanced or is_pro)
+    show_pro = bool(is_pro)
+
+    # Return updates for: pro preset, polish profile, advanced/pro, advanced post, fx chain, panels.
+    return (
+        gr.update(visible=show_adv),
+        gr.update(visible=show_adv),
+        gr.update(visible=show_adv),
+        gr.update(visible=show_adv),
+        gr.update(visible=show_adv),
+        gr.update(visible=(not is_basic) or show_pro),
+    )
+
+
+def _ui_mode_defaults_legacy(mode_label: str):
+    m = str(mode_label or "Basic").strip().lower()
+    if m.startswith("basic"):
+        return (
+            gr.update(value=1),  # candidates
+            gr.update(value=False),  # export_minecraft
+        )
+    return (
+        gr.update(),
+        gr.update(),
+    )
+
+
+def _ui_apply_workflow_preset_legacy(preset_label: str):
+    p = _WORKFLOW_PRESETS_LEGACY.get(str(preset_label or "(none)"), {})
+    if not p:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+    return (
+        gr.update(value=p.get("engine")),
+        gr.update(value=p.get("seconds")),
+        gr.update(value=p.get("candidates")),
+        gr.update(value=p.get("post")),
+        gr.update(value=p.get("polish")),
+    )
+
+
+def _ui_hint_text_legacy(engine: str, seconds: float, candidates: int, export_minecraft: bool, post: bool, polish: bool) -> str:
+    e = str(engine or "").strip().lower()
+    parts: list[str] = []
+    if e in {"diffusers", "replicate", "stable_audio_open", "hybrid"}:
+        parts.append("AI engine: slower, higher quality")
+    elif e in {"rfxgen", "layered", "samplelib", "synth"}:
+        parts.append("Procedural engine: fast iteration")
+    else:
+        parts.append(f"Engine: {engine}")
+
+    try:
+        s = float(seconds)
+        if s <= 1.0:
+            parts.append("Short sound")
+        elif s >= 5.0:
+            parts.append("Longer sound")
+    except Exception:
+        pass
+
+    try:
+        n = int(candidates) if candidates is not None else 1
+        if n > 1:
+            parts.append(f"Best-of-N enabled: {n} candidates")
+    except Exception:
+        pass
+
+    if bool(export_minecraft):
+        parts.append("Minecraft export: on")
+
+    if bool(polish):
+        parts.append("Polish mode: extra finishing")
+    elif bool(post):
+        parts.append("Post-process: trim/fade/normalize")
+    return " • ".join(parts)
+
+
+def _history_append_legacy(history: list[dict[str, Any]] | None, item: dict[str, Any]) -> list[dict[str, Any]]:
+    h = list(history or [])
+    h.append(dict(item))
+    return h[-10:]
+
+
+def _history_rows_legacy(history: list[dict[str, Any]] | None) -> list[list[object]]:
+    rows: list[list[object]] = []
+    for i, it in enumerate(list(history or [])[::-1], start=1):
+        if not isinstance(it, dict):
+            continue
+        rows.append([i, it.get("engine"), it.get("prompt"), it.get("seconds"), it.get("seed"), it.get("out")])
+    return rows
+
+
+def _history_choices_legacy(history: list[dict[str, Any]] | None) -> list[str]:
+    out: list[str] = []
+    for idx, it in enumerate(list(history or [])[::-1]):
+        if not isinstance(it, dict):
+            continue
+        prompt = str(it.get("prompt") or "").strip()
+        engine = str(it.get("engine") or "").strip()
+        out.append(f"{idx + 1}. {engine} — {prompt[:60]}")
+    return out
+
+
+def _history_get_legacy(history: list[dict[str, Any]] | None, choice_label: str) -> dict[str, Any] | None:
+    labels = _history_choices_legacy(history)
+    try:
+        pos = labels.index(str(choice_label))
+    except ValueError:
+        return None
+    items = list(history or [])[::-1]
+    if pos < 0 or pos >= len(items):
+        return None
+    return items[pos] if isinstance(items[pos], dict) else None
+
+
+def _ui_history_apply_legacy(history: list[dict[str, Any]] | None, choice_label: str):
+    it = _history_get_legacy(history, choice_label)
+    if not it:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            "Pick a history entry first.",
+        )
+    return (
+        gr.update(value=it.get("engine")),
+        gr.update(value=it.get("prompt")),
+        gr.update(value=it.get("seconds")),
+        gr.update(value=it.get("seed")),
+        gr.update(value=it.get("candidates")),
+        gr.update(value=it.get("export_minecraft")),
+        "Applied history entry.",
+    )
+
+
 def _ui_icon_data_uri() -> str | None:
     """Return a data: URI for the UI icon, if available.
 
@@ -1375,12 +1532,46 @@ def build_demo_legacy() -> gr.Blocks:
     {watermark_css}
     """
 
-    with gr.Blocks(title="SÖNDBÖUND", css=css) as demo:
+    js = r"""
+() => {
+  // Keyboard shortcuts (best-effort): Ctrl+Enter generates.
+  document.addEventListener('keydown', (e) => {
+    try {
+      const isCtrlEnter = (e.ctrlKey || e.metaKey) && (e.key === 'Enter');
+      if (isCtrlEnter) {
+        const btn = document.querySelector('#sndb_gen_btn');
+        if (btn) {
+          btn.click();
+          e.preventDefault();
+        }
+      }
+    } catch (_) {}
+  }, { capture: true });
+}
+"""
+
+    with gr.Blocks(title="SÖNDBÖUND", css=css, js=js) as demo:
         gr.Markdown(
             "# SÖNDBÖUND — Prompt → Sound Effect\n"
             "Start with: Engine + Prompt + Seconds. Expand the accordions only if you need more control.\n"
             "Tip: turn on **Pro preset** or a **Polish profile** for quick wins."
         )
+
+        history_state = gr.State([])
+        with gr.Row():
+            ui_mode = gr.Radio(
+                ["Basic", "Advanced", "Pro"],
+                value="Basic",
+                label="Mode",
+                info="Basic hides advanced panels; Advanced shows DSP + presets; Pro also shows the extra panels area.",
+            )
+            workflow_preset = gr.Dropdown(
+                list(_WORKFLOW_PRESETS_LEGACY.keys()),
+                value="(none)",
+                label="Workflow preset",
+            )
+        hint_md = gr.Markdown("")
+
         with gr.Accordion("Engine & preset", open=True):
             engine = gr.Radio(available_engines(), value="diffusers", label="Engine")
             with gr.Row():
@@ -1662,6 +1853,7 @@ def build_demo_legacy() -> gr.Blocks:
             mp3_bitrate = gr.Textbox(value="192k", label="MP3 bitrate")
 
         with gr.Accordion("Pro preset", open=False):
+            # Visibility is controlled by Mode.
             pro_preset = gr.Dropdown(["off", *pro_preset_keys()], value="off", label="pro preset")
             pro_preset_info = gr.Markdown("", visible=False)
             with gr.Row():
@@ -1670,7 +1862,7 @@ def build_demo_legacy() -> gr.Blocks:
                 variation = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="variation")
                 pitch_contour = gr.Dropdown(["flat", "rise", "fall", "updown", "downup"], value="flat", label="pitch contour")
 
-        with gr.Accordion("Advanced / Pro Mode", open=False):
+        with gr.Accordion("Advanced / Pro Mode", open=False, visible=False) as advanced_acc:
             multiband = gr.Checkbox(value=False, label="multi-band cleanup")
             with gr.Row():
                 mb_low_hz = gr.Slider(80.0, 600.0, value=250.0, step=10.0, label="mb low crossover (Hz)")
@@ -1728,7 +1920,7 @@ def build_demo_legacy() -> gr.Blocks:
                 compressor_attack_ms = gr.Number(value=None, precision=1, label="compressor attack (ms, blank=default)")
                 compressor_release_ms = gr.Number(value=None, precision=1, label="compressor release (ms, blank=default)")
 
-        with gr.Accordion("Polish profile", open=False):
+        with gr.Accordion("Polish profile", open=False, visible=False) as polish_profile_acc:
             polish_profile = gr.Dropdown(["off", *polish_profile_keys()], value="off", label="polish profile")
             polish_profile_info = gr.Markdown("", visible=False)
             post = gr.Checkbox(value=True, label="Post-process (trim/fade/normalize/EQ)")
@@ -1741,11 +1933,11 @@ def build_demo_legacy() -> gr.Blocks:
                 label="Loop crossfade curve",
             )
 
-        with gr.Accordion("FX chain (v1)", open=False):
+        with gr.Accordion("FX chain (v1)", open=False, visible=False) as fx_chain_acc:
             fx_chain = gr.Dropdown(["off", *fx_chain_keys()], value="off", label="fx chain")
             fx_chain_json = gr.File(label="fx chain JSON (optional)", file_types=[".json"])
 
-        with gr.Accordion("Advanced post (3.5)", open=False):
+        with gr.Accordion("Advanced post (3.5)", open=False, visible=False) as advanced_post_acc:
             compressor_follower_mode = gr.Dropdown(
                 ["peak", "rms"],
                 value="peak",
@@ -1822,7 +2014,7 @@ def build_demo_legacy() -> gr.Blocks:
                 mc_sample_rate = gr.Dropdown([22050, 32000, 44100, 48000], value=44100, label="Sample rate")
                 mc_channels = gr.Dropdown([1, 2], value=1, label="Channels")
 
-        btn = gr.Button("Generate")
+        btn = gr.Button("Generate", elem_id="sndb_gen_btn")
         out_file = gr.File(label="Generated file")
         playsound_cmd = gr.Textbox(label="Minecraft playsound", interactive=False)
         info = gr.Textbox(label="QA / post-process", interactive=False)
@@ -1830,8 +2022,347 @@ def build_demo_legacy() -> gr.Blocks:
             wave = gr.Image(label="Waveform", type="pil")
             spec = gr.Image(label="Spectrogram", type="pil")
 
+        with gr.Accordion("History", open=False):
+            history_df = gr.Dataframe(
+                headers=["#", "engine", "prompt", "seconds", "seed", "out"],
+                datatype=["number", "str", "str", "number", "str", "str"],
+                row_count=(0, "dynamic"),
+                col_count=(6, "fixed"),
+                interactive=False,
+                label="Last 10 runs",
+            )
+            history_pick = gr.Dropdown(choices=[], value=None, label="Pick")
+            history_apply_btn = gr.Button("Apply to controls")
+            history_status = gr.Textbox(label="Status", interactive=False)
+
+        def _generate_with_history(
+            engine_v,
+            prompt_v,
+            seconds_v,
+            seed_v,
+            candidates_v,
+            device_v,
+            model_v,
+            stable_audio_model_v,
+            stable_audio_negative_prompt_v,
+            stable_audio_hf_token_v,
+            stable_audio_steps_v,
+            stable_audio_guidance_scale_v,
+            stable_audio_sampler_v,
+            hybrid_base_engine_v,
+            diffusers_multiband_v,
+            diffusers_mb_mode_v,
+            diffusers_mb_low_hz_v,
+            diffusers_mb_high_hz_v,
+            preset_v,
+            rfxgen_path_v,
+            library_mix_count_v,
+            synth_waveform_v,
+            layered_preset_v,
+            layered_curve_v,
+            layered_duck_v,
+            layered_family_v,
+            layered_source_lock_v,
+            layered_source_seed_v,
+            layered_micro_variation_v,
+            layered_granular_preset_v,
+            layered_granular_amount_v,
+            layered_granular_grain_ms_v,
+            layered_granular_spray_v,
+            layered_transient_sharpness_v,
+            layered_tail_length_ms_v,
+            layered_transient_tilt_v,
+            layered_body_tilt_v,
+            layered_tail_tilt_v,
+            out_format_v,
+            out_sample_rate_v,
+            wav_subtype_v,
+            mp3_bitrate_v,
+            map_controls_v,
+            pro_preset_v,
+            polish_profile_v,
+            emotion_v,
+            intensity_v,
+            variation_v,
+            pitch_contour_v,
+            multiband_v,
+            mb_low_hz_v,
+            mb_high_hz_v,
+            mb_low_gain_db_v,
+            mb_mid_gain_db_v,
+            mb_high_gain_db_v,
+            mb_comp_threshold_db_v,
+            mb_comp_ratio_v,
+            creature_size_v,
+            formant_shift_v,
+            texture_preset_v,
+            texture_amount_v,
+            texture_grain_ms_v,
+            texture_spray_v,
+            reverb_preset_v,
+            reverb_mix_v,
+            reverb_time_v,
+            denoise_amount_v,
+            transient_attack_v,
+            transient_sustain_v,
+            exciter_amount_v,
+            compressor_attack_ms_v,
+            compressor_release_ms_v,
+            loop_clean_v,
+            export_minecraft_v,
+            mc_target_v,
+            pack_root_v,
+            namespace_v,
+            event_v,
+            sound_path_v,
+            subtitle_v,
+            variants_v,
+            weight_v,
+            volume_v,
+            pitch_v,
+            ogg_quality_v,
+            post_v,
+            polish_v,
+            replicate_model_v,
+            replicate_token_v,
+            replicate_input_json_v,
+            samplelib_zips_v,
+            library_pitch_min_v,
+            library_pitch_max_v,
+            library_index_v,
+            synth_freq_hz_v,
+            synth_attack_ms_v,
+            synth_decay_ms_v,
+            synth_sustain_v,
+            synth_release_ms_v,
+            synth_noise_mix_v,
+            synth_drive_v,
+            synth_pitch_min_v,
+            synth_pitch_max_v,
+            synth_lowpass_hz_v,
+            synth_highpass_hz_v,
+            loop_crossfade_ms_v,
+            subtitle_key_v,
+            mc_sample_rate_v,
+            mc_channels_v,
+            layered_transient_ms_adv_v,
+            layered_tail_ms_adv_v,
+            layered_transient_attack_ms_adv_v,
+            layered_transient_hold_ms_adv_v,
+            layered_transient_decay_ms_adv_v,
+            layered_body_attack_ms_adv_v,
+            layered_body_hold_ms_adv_v,
+            layered_body_decay_ms_adv_v,
+            layered_tail_attack_ms_adv_v,
+            layered_tail_hold_ms_adv_v,
+            layered_tail_decay_ms_adv_v,
+            layered_duck_release_ms_adv_v,
+            layered_xfade_transient_to_body_ms_v,
+            layered_xfade_body_to_tail_ms_v,
+            layered_transient_hp_hz_v,
+            layered_transient_lp_hz_v,
+            layered_transient_drive_v,
+            layered_transient_gain_db_v,
+            layered_body_hp_hz_v,
+            layered_body_lp_hz_v,
+            layered_body_drive_v,
+            layered_body_gain_db_v,
+            layered_tail_hp_hz_v,
+            layered_tail_lp_hz_v,
+            layered_tail_drive_v,
+            layered_tail_gain_db_v,
+            loop_crossfade_curve_v,
+            duck_bed_v,
+            duck_bed_split_hz_v,
+            duck_bed_amount_v,
+            duck_bed_attack_ms_v,
+            duck_bed_release_ms_v,
+            post_stack_v,
+            compressor_follower_mode_v,
+            layered_xfade_curve_v,
+            fx_chain_v,
+            fx_chain_json_v,
+            history_v,
+        ):
+            out_path, playsound, info2, wave2, spec2 = _generate(
+                engine_v,
+                prompt_v,
+                seconds_v,
+                seed_v,
+                candidates_v,
+                device_v,
+                model_v,
+                stable_audio_model_v,
+                stable_audio_negative_prompt_v,
+                stable_audio_hf_token_v,
+                stable_audio_steps_v,
+                stable_audio_guidance_scale_v,
+                stable_audio_sampler_v,
+                hybrid_base_engine_v,
+                diffusers_multiband_v,
+                diffusers_mb_mode_v,
+                diffusers_mb_low_hz_v,
+                diffusers_mb_high_hz_v,
+                preset_v,
+                rfxgen_path_v,
+                library_mix_count_v,
+                synth_waveform_v,
+                layered_preset_v,
+                layered_curve_v,
+                layered_duck_v,
+                layered_family_v,
+                layered_source_lock_v,
+                layered_source_seed_v,
+                layered_micro_variation_v,
+                layered_granular_preset_v,
+                layered_granular_amount_v,
+                layered_granular_grain_ms_v,
+                layered_granular_spray_v,
+                layered_transient_sharpness_v,
+                layered_tail_length_ms_v,
+                layered_transient_tilt_v,
+                layered_body_tilt_v,
+                layered_tail_tilt_v,
+                out_format_v,
+                out_sample_rate_v,
+                wav_subtype_v,
+                mp3_bitrate_v,
+                map_controls_v,
+                pro_preset_v,
+                polish_profile_v,
+                emotion_v,
+                intensity_v,
+                variation_v,
+                pitch_contour_v,
+                multiband_v,
+                mb_low_hz_v,
+                mb_high_hz_v,
+                mb_low_gain_db_v,
+                mb_mid_gain_db_v,
+                mb_high_gain_db_v,
+                mb_comp_threshold_db_v,
+                mb_comp_ratio_v,
+                creature_size_v,
+                formant_shift_v,
+                texture_preset_v,
+                texture_amount_v,
+                texture_grain_ms_v,
+                texture_spray_v,
+                reverb_preset_v,
+                reverb_mix_v,
+                reverb_time_v,
+                denoise_amount_v,
+                transient_attack_v,
+                transient_sustain_v,
+                exciter_amount_v,
+                compressor_attack_ms_v,
+                compressor_release_ms_v,
+                loop_clean_v,
+                export_minecraft_v,
+                mc_target_v,
+                pack_root_v,
+                namespace_v,
+                event_v,
+                sound_path_v,
+                subtitle_v,
+                variants_v,
+                weight_v,
+                volume_v,
+                pitch_v,
+                ogg_quality_v,
+                post_v,
+                polish_v,
+                replicate_model_v,
+                replicate_token_v,
+                replicate_input_json_v,
+                samplelib_zips_v,
+                library_pitch_min_v,
+                library_pitch_max_v,
+                library_index_v,
+                synth_freq_hz_v,
+                synth_attack_ms_v,
+                synth_decay_ms_v,
+                synth_sustain_v,
+                synth_release_ms_v,
+                synth_noise_mix_v,
+                synth_drive_v,
+                synth_pitch_min_v,
+                synth_pitch_max_v,
+                synth_lowpass_hz_v,
+                synth_highpass_hz_v,
+                synth_highpass_hz_v,
+                loop_crossfade_ms_v,
+                subtitle_key_v,
+                mc_sample_rate_v,
+                mc_channels_v,
+                layered_transient_ms_adv_v,
+                layered_tail_ms_adv_v,
+                layered_transient_attack_ms_adv_v,
+                layered_transient_hold_ms_adv_v,
+                layered_transient_decay_ms_adv_v,
+                layered_body_attack_ms_adv_v,
+                layered_body_hold_ms_adv_v,
+                layered_body_decay_ms_adv_v,
+                layered_tail_attack_ms_adv_v,
+                layered_tail_hold_ms_adv_v,
+                layered_tail_decay_ms_adv_v,
+                layered_duck_release_ms_adv_v,
+                layered_xfade_transient_to_body_ms_v,
+                layered_xfade_body_to_tail_ms_v,
+                layered_transient_hp_hz_v,
+                layered_transient_lp_hz_v,
+                layered_transient_drive_v,
+                layered_transient_gain_db_v,
+                layered_body_hp_hz_v,
+                layered_body_lp_hz_v,
+                layered_body_drive_v,
+                layered_body_gain_db_v,
+                layered_tail_hp_hz_v,
+                layered_tail_lp_hz_v,
+                layered_tail_drive_v,
+                layered_tail_gain_db_v,
+                loop_crossfade_curve_v,
+                duck_bed_v,
+                duck_bed_split_hz_v,
+                duck_bed_amount_v,
+                duck_bed_attack_ms_v,
+                duck_bed_release_ms_v,
+                post_stack_v,
+                compressor_follower_mode_v,
+                layered_xfade_curve_v,
+                fx_chain_v,
+                fx_chain_json_v,
+            )
+
+            h2 = list(history_v or [])
+            if out_path:
+                h2 = _history_append_legacy(
+                    h2,
+                    {
+                        "engine": str(engine_v),
+                        "prompt": str(prompt_v),
+                        "seconds": float(seconds_v) if seconds_v is not None else None,
+                        "seed": (str(seed_v) if seed_v is not None else ""),
+                        "candidates": int(candidates_v) if candidates_v is not None else 1,
+                        "export_minecraft": bool(export_minecraft_v),
+                        "out": str(out_path),
+                    },
+                )
+
+            choices = _history_choices_legacy(h2)
+            return (
+                out_path,
+                playsound,
+                info2,
+                wave2,
+                spec2,
+                h2,
+                _history_rows_legacy(h2),
+                gr.update(choices=choices, value=(choices[0] if choices else None)),
+            )
+
         btn.click(
-            fn=_generate,
+            fn=_generate_with_history,
             inputs=[
                 engine,
                 prompt,
@@ -1996,145 +2527,198 @@ def build_demo_legacy() -> gr.Blocks:
 
                 fx_chain,
                 fx_chain_json,
+                history_state,
             ],
-            outputs=[out_file, playsound_cmd, info, wave, spec],
+            outputs=[out_file, playsound_cmd, info, wave, spec, history_state, history_df, history_pick],
         )
 
-        gr.Markdown("## Panels")
-        with gr.Tabs():
-            with gr.Tab("Preset browser"):
-                gr.Markdown(
-                    "Browse the built-in preset systems. This is intentionally lightweight: pick a preset to see what it does."
-                )
-                with gr.Row():
-                    pb_pro = gr.Dropdown(["off", *pro_preset_keys()], value="off", label="Pro preset")
-                    pb_profile = gr.Dropdown(["off", *polish_profile_keys()], value="off", label="Polish profile")
-                pb_pro_info = gr.Markdown("", visible=False)
-                pb_profile_info = gr.Markdown("", visible=False)
+        panels_group = gr.Group(visible=False)
+        with panels_group:
+            gr.Markdown("## Panels")
+            with gr.Tabs():
+                with gr.Tab("Preset browser"):
+                    gr.Markdown(
+                        "Browse the built-in preset systems. This is intentionally lightweight: pick a preset to see what it does."
+                    )
+                    with gr.Row():
+                        pb_pro = gr.Dropdown(["off", *pro_preset_keys()], value="off", label="Pro preset")
+                        pb_profile = gr.Dropdown(["off", *polish_profile_keys()], value="off", label="Polish profile")
+                    pb_pro_info = gr.Markdown("", visible=False)
+                    pb_profile_info = gr.Markdown("", visible=False)
 
-                pb_pro.change(fn=_preset_info_md, inputs=[pb_pro], outputs=[pb_pro_info])
-                pb_profile.change(fn=_profile_info_md, inputs=[pb_profile], outputs=[pb_profile_info])
+                    pb_pro.change(fn=_preset_info_md, inputs=[pb_pro], outputs=[pb_pro_info])
+                    pb_profile.change(fn=_profile_info_md, inputs=[pb_profile], outputs=[pb_profile_info])
 
-                gr.Markdown("### rfxgen presets")
-                gr.Markdown("\n".join([f"- `{p}`" for p in SUPPORTED_PRESETS]))
+                    gr.Markdown("### rfxgen presets")
+                    gr.Markdown("\n".join([f"- `{p}`" for p in SUPPORTED_PRESETS]))
 
-                gr.Markdown("### FX chains (v1)")
-                gr.Markdown("\n".join([f"- `{k}`" for k in fx_chain_keys()]))
+                    gr.Markdown("### FX chains (v1)")
+                    gr.Markdown("\n".join([f"- `{k}`" for k in fx_chain_keys()]))
 
-            with gr.Tab("Waveform editor"):
-                gr.Markdown(
-                    "Launch the built-in destructive editor on a WAV. "
-                    "This opens a separate window on the machine running the UI (desktop/local use)."
-                )
-                ed_wav = gr.File(label="WAV to edit", file_types=[".wav"])
-                ed_btn = gr.Button("Open editor")
-                ed_status = gr.Textbox(label="Status", interactive=False)
-                ed_btn.click(fn=_ui_launch_editor, inputs=[ed_wav], outputs=[ed_status])
+                with gr.Tab("Waveform editor"):
+                    gr.Markdown(
+                        "Launch the built-in destructive editor on a WAV. "
+                        "This opens a separate window on the machine running the UI (desktop/local use)."
+                    )
+                    ed_wav = gr.File(label="WAV to edit", file_types=[".wav"])
+                    ed_btn = gr.Button("Open editor")
+                    ed_status = gr.Textbox(label="Status", interactive=False)
+                    ed_btn.click(fn=_ui_launch_editor, inputs=[ed_wav], outputs=[ed_status])
 
-            with gr.Tab("FX chain editor"):
-                gr.Markdown("Edit FX chain v2 JSON, reorder steps, audition, and save.")
-                fx_modules = gr.Markdown(_ui_fx_modules_md())
-                gr.Markdown("### Chain")
-                fx_chain_file = gr.File(label="Load chain JSON (optional)", file_types=[".json"])
-                fx_load_btn = gr.Button("Load")
-                fx_chain_json = gr.Textbox(label="Chain JSON", lines=14, value="")
-                fx_chain_status = gr.Textbox(label="Status", interactive=False)
-                fx_load_btn.click(fn=_ui_fx_chain_load, inputs=[fx_chain_file], outputs=[fx_chain_json, fx_chain_status])
+                with gr.Tab("FX chain editor"):
+                    gr.Markdown("Edit FX chain v2 JSON, reorder steps, audition, and save.")
+                    fx_modules = gr.Markdown(_ui_fx_modules_md())
+                    gr.Markdown("### Chain")
+                    fx_chain_file = gr.File(label="Load chain JSON (optional)", file_types=[".json"])
+                    fx_load_btn = gr.Button("Load")
+                    fx_chain_json = gr.Textbox(label="Chain JSON", lines=14, value="")
+                    fx_chain_status = gr.Textbox(label="Status", interactive=False)
+                    fx_load_btn.click(
+                        fn=_ui_fx_chain_load,
+                        inputs=[fx_chain_file],
+                        outputs=[fx_chain_json, fx_chain_status],
+                    )
 
-                with gr.Row():
-                    fx_save_path = gr.Textbox(value=str(user_configs_dir() / "fx_chain_v2.web.json"), label="Save path")
-                    fx_save_btn = gr.Button("Save")
-                fx_save_btn.click(fn=_ui_fx_chain_save, inputs=[fx_chain_json, fx_save_path], outputs=[fx_chain_status])
+                    with gr.Row():
+                        fx_save_path = gr.Textbox(
+                            value=str(user_configs_dir() / "fx_chain_v2.web.json"),
+                            label="Save path",
+                        )
+                        fx_save_btn = gr.Button("Save")
+                    fx_save_btn.click(
+                        fn=_ui_fx_chain_save,
+                        inputs=[fx_chain_json, fx_save_path],
+                        outputs=[fx_chain_status],
+                    )
 
-                gr.Markdown("### Audition")
-                fx_wav = gr.File(label="WAV for audition", file_types=[".wav"])
-                fx_aud_btn = gr.Button("Apply + audition")
-                fx_audio_out = gr.Audio(label="Result", type="numpy")
-                fx_aud_btn.click(fn=_ui_fx_chain_apply, inputs=[fx_chain_json, fx_wav], outputs=[fx_audio_out, fx_chain_status])
+                    gr.Markdown("### Audition")
+                    fx_wav = gr.File(label="WAV for audition", file_types=[".wav"])
+                    fx_aud_btn = gr.Button("Apply + audition")
+                    fx_audio_out = gr.Audio(label="Result", type="numpy")
+                    fx_aud_btn.click(
+                        fn=_ui_fx_chain_apply,
+                        inputs=[fx_chain_json, fx_wav],
+                        outputs=[fx_audio_out, fx_chain_status],
+                    )
 
-            with gr.Tab("Project browser"):
-                gr.Markdown("Load a project, list items, build items, and open the editor on an item.")
-                pr_root = gr.Textbox(value=".", label="Project root")
-                pr_load_btn = gr.Button("Load project")
-                pr_json = gr.JSON(label="Project")
-                pr_items = gr.Dataframe(
-                    headers=["id", "category", "engine", "event", "sound_path", "variants", "active_version"],
-                    datatype=["str", "str", "str", "str", "str", "number", "number"],
-                    row_count=(0, "dynamic"),
-                    col_count=(7, "fixed"),
-                    interactive=False,
-                    label="Items",
-                )
-                pr_status = gr.Textbox(label="Status", interactive=False)
-                pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items])
+                with gr.Tab("Project browser"):
+                    gr.Markdown("Load a project, list items, build items, and open the editor on an item.")
+                    pr_root = gr.Textbox(value=".", label="Project root")
+                    pr_load_btn = gr.Button("Load project")
+                    pr_json = gr.JSON(label="Project")
+                    pr_items = gr.Dataframe(
+                        headers=["id", "category", "engine", "event", "sound_path", "variants", "active_version"],
+                        datatype=["str", "str", "str", "str", "str", "number", "number"],
+                        row_count=(0, "dynamic"),
+                        col_count=(7, "fixed"),
+                        interactive=False,
+                        label="Items",
+                    )
+                    pr_status = gr.Textbox(label="Status", interactive=False)
+                    pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items])
 
-                with gr.Row():
-                    pr_item_id = gr.Textbox(value="", label="Item id (optional)")
-                    pr_build_btn = gr.Button("Build")
-                    pr_edit_btn = gr.Button("Open editor")
-                pr_build_btn.click(fn=_ui_project_build, inputs=[pr_root, pr_item_id], outputs=[pr_status])
-                pr_edit_btn.click(fn=_ui_project_edit, inputs=[pr_root, pr_item_id], outputs=[pr_status])
+                    with gr.Row():
+                        pr_item_id = gr.Textbox(value="", label="Item id (optional)")
+                        pr_build_btn = gr.Button("Build")
+                        pr_edit_btn = gr.Button("Open editor")
+                    pr_build_btn.click(fn=_ui_project_build, inputs=[pr_root, pr_item_id], outputs=[pr_status])
+                    pr_edit_btn.click(fn=_ui_project_edit, inputs=[pr_root, pr_item_id], outputs=[pr_status])
 
-            with gr.Tab("Export panel"):
-                gr.Markdown("Export an existing audio file to WAV/MP3/OGG/FLAC, or export into a Minecraft pack.")
-                ex_file = gr.File(label="Source audio", file_types=[".wav", ".mp3", ".ogg", ".flac"])
-                with gr.Row():
-                    ex_fmt = gr.Dropdown(["wav", "mp3", "ogg", "flac"], value="wav", label="Output format")
-                    ex_sr = gr.Number(value=None, precision=0, label="Sample rate (optional)")
-                with gr.Row():
-                    ex_wav_subtype = gr.Dropdown(["PCM_16", "PCM_24", "FLOAT"], value="PCM_16", label="WAV subtype")
-                    ex_mp3_bitrate = gr.Textbox(value="192k", label="MP3 bitrate")
+                with gr.Tab("Export panel"):
+                    gr.Markdown("Export an existing audio file to WAV/MP3/OGG/FLAC, or export into a Minecraft pack.")
+                    ex_file = gr.File(label="Source audio", file_types=[".wav", ".mp3", ".ogg", ".flac"])
+                    with gr.Row():
+                        ex_fmt = gr.Dropdown(["wav", "mp3", "ogg", "flac"], value="wav", label="Output format")
+                        ex_sr = gr.Number(value=None, precision=0, label="Sample rate (optional)")
+                    with gr.Row():
+                        ex_wav_subtype = gr.Dropdown(["PCM_16", "PCM_24", "FLOAT"], value="PCM_16", label="WAV subtype")
+                        ex_mp3_bitrate = gr.Textbox(value="192k", label="MP3 bitrate")
 
-                gr.Markdown("### Minecraft export")
-                ex_mc = gr.Checkbox(value=False, label="Export to Minecraft (.ogg + sounds.json)")
-                with gr.Row():
-                    ex_mc_target = gr.Dropdown(["resourcepack", "forge"], value="resourcepack", label="Target")
-                    ex_pack_root = gr.Textbox(value="resourcepack", label="Pack/Resources root")
-                with gr.Row():
-                    ex_ns = gr.Textbox(value="soundgen", label="Namespace (modid)")
-                    ex_event = gr.Textbox(value="generated.web", label="Event (sounds.json key)")
-                with gr.Row():
-                    ex_sound_path = gr.Textbox(value="generated/web", label="Sound path (under sounds/, no extension)")
-                    ex_subtitle = gr.Textbox(value="", label="Subtitle (optional)")
-                    ex_subtitle_key = gr.Textbox(value="", label="Subtitle key (optional)")
-                with gr.Row():
-                    ex_weight = gr.Slider(1, 20, value=1, step=1, label="Weight")
-                    ex_volume = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="Volume")
-                    ex_pitch = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Pitch")
-                    ex_ogg_quality = gr.Slider(0, 10, value=5, step=1, label="OGG quality")
-                with gr.Row():
-                    ex_mc_sample_rate = gr.Dropdown([22050, 32000, 44100, 48000], value=44100, label="Sample rate")
-                    ex_mc_channels = gr.Dropdown([1, 2], value=1, label="Channels")
+                    gr.Markdown("### Minecraft export")
+                    ex_mc = gr.Checkbox(value=False, label="Export to Minecraft (.ogg + sounds.json)")
+                    with gr.Row():
+                        ex_mc_target = gr.Dropdown(["resourcepack", "forge"], value="resourcepack", label="Target")
+                        ex_pack_root = gr.Textbox(value="resourcepack", label="Pack/Resources root")
+                    with gr.Row():
+                        ex_ns = gr.Textbox(value="soundgen", label="Namespace (modid)")
+                        ex_event = gr.Textbox(value="generated.web", label="Event (sounds.json key)")
+                    with gr.Row():
+                        ex_sound_path = gr.Textbox(
+                            value="generated/web",
+                            label="Sound path (under sounds/, no extension)",
+                        )
+                        ex_subtitle = gr.Textbox(value="", label="Subtitle (optional)")
+                        ex_subtitle_key = gr.Textbox(value="", label="Subtitle key (optional)")
+                    with gr.Row():
+                        ex_weight = gr.Slider(1, 20, value=1, step=1, label="Weight")
+                        ex_volume = gr.Slider(0.0, 2.0, value=1.0, step=0.05, label="Volume")
+                        ex_pitch = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Pitch")
+                        ex_ogg_quality = gr.Slider(0, 10, value=5, step=1, label="OGG quality")
+                    with gr.Row():
+                        ex_mc_sample_rate = gr.Dropdown([22050, 32000, 44100, 48000], value=44100, label="Sample rate")
+                        ex_mc_channels = gr.Dropdown([1, 2], value=1, label="Channels")
 
-                ex_btn = gr.Button("Export")
-                ex_out = gr.File(label="Exported file")
-                ex_playsound = gr.Textbox(label="Minecraft playsound", interactive=False)
+                    ex_btn = gr.Button("Export")
+                    ex_out = gr.File(label="Exported file")
+                    ex_playsound = gr.Textbox(label="Minecraft playsound", interactive=False)
 
-                ex_btn.click(
-                    fn=_ui_export_existing,
-                    inputs=[
-                        ex_file,
-                        ex_fmt,
-                        ex_sr,
-                        ex_wav_subtype,
-                        ex_mp3_bitrate,
-                        ex_mc,
-                        ex_mc_target,
-                        ex_pack_root,
-                        ex_ns,
-                        ex_event,
-                        ex_sound_path,
-                        ex_subtitle,
-                        ex_subtitle_key,
-                        ex_weight,
-                        ex_volume,
-                        ex_pitch,
-                        ex_ogg_quality,
-                        ex_mc_sample_rate,
-                        ex_mc_channels,
-                    ],
-                    outputs=[ex_out, ex_playsound],
-                )
+                    ex_btn.click(
+                        fn=_ui_export_existing,
+                        inputs=[
+                            ex_file,
+                            ex_fmt,
+                            ex_sr,
+                            ex_wav_subtype,
+                            ex_mp3_bitrate,
+                            ex_mc,
+                            ex_mc_target,
+                            ex_pack_root,
+                            ex_ns,
+                            ex_event,
+                            ex_sound_path,
+                            ex_subtitle,
+                            ex_subtitle_key,
+                            ex_weight,
+                            ex_volume,
+                            ex_pitch,
+                            ex_ogg_quality,
+                            ex_mc_sample_rate,
+                            ex_mc_channels,
+                        ],
+                        outputs=[ex_out, ex_playsound],
+                    )
+
+        # Mode + preset wiring
+        ui_mode.change(
+            fn=_ui_mode_visibility_legacy,
+            inputs=[ui_mode],
+            outputs=[pro_preset, polish_profile, advanced_acc, advanced_post_acc, fx_chain_acc, panels_group],
+        )
+        ui_mode.change(
+            fn=_ui_mode_defaults_legacy,
+            inputs=[ui_mode],
+            outputs=[candidates, export_minecraft],
+        )
+
+        workflow_preset.change(
+            fn=_ui_apply_workflow_preset_legacy,
+            inputs=[workflow_preset],
+            outputs=[engine, seconds, candidates, post, polish],
+        )
+
+        # Live hint text
+        engine.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+        seconds.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+        candidates.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+        export_minecraft.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+        post.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+        polish.change(fn=_ui_hint_text_legacy, inputs=[engine, seconds, candidates, export_minecraft, post, polish], outputs=[hint_md])
+
+        history_apply_btn.click(
+            fn=_ui_history_apply_legacy,
+            inputs=[history_state, history_pick],
+            outputs=[engine, prompt, seconds, seed, candidates, export_minecraft, history_status],
+        )
 
     return demo
 
