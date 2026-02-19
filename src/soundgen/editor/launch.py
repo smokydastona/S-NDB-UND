@@ -178,6 +178,235 @@ def _resample_linear(x: np.ndarray, *, rate: float) -> np.ndarray:
     return y
 
 
+def _fit_to_length(x: np.ndarray, n: int) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(n)
+    if n <= 0:
+        return np.zeros((0,), dtype=np.float32)
+    if x.size == n:
+        return x
+    if x.size > n:
+        return x[:n].astype(np.float32, copy=False)
+    out = np.zeros((n,), dtype=np.float32)
+    out[: int(x.size)] = x
+    return out
+
+
+def _resample_to_length_linear(x: np.ndarray, *, new_n: int) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    n = int(x.size)
+    new_n = int(new_n)
+    if n <= 1 or new_n <= 1 or n == new_n:
+        return _fit_to_length(x, new_n)
+    src_idx = np.linspace(0.0, float(n - 1), new_n, dtype=np.float32)
+    xp = np.arange(n, dtype=np.float32)
+    return np.interp(src_idx, xp, x).astype(np.float32)
+
+
+def _resample_to_sr(x: np.ndarray, *, src_sr: int, dst_sr: int) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    src_sr = int(src_sr)
+    dst_sr = int(dst_sr)
+    if x.size <= 1 or src_sr <= 0 or dst_sr <= 0 or src_sr == dst_sr:
+        return x.astype(np.float32, copy=False)
+
+    try:
+        from scipy import signal
+    except Exception:
+        new_n = int(max(1, round(float(x.size) * float(dst_sr) / float(src_sr))))
+        return _resample_to_length_linear(x, new_n=new_n)
+
+    g = math.gcd(src_sr, dst_sr)
+    up = int(dst_sr // g)
+    down = int(src_sr // g)
+    return signal.resample_poly(x, up, down).astype(np.float32, copy=False)
+
+
+def _phase_vocoder(D: np.ndarray, *, rate: float, hop_length: int) -> np.ndarray:
+    """Time-stretch an STFT by rate using a phase vocoder.
+
+    rate > 1.0 speeds up (shorter). rate < 1.0 slows down (longer).
+    """
+
+    D = np.asarray(D)
+    rate = float(rate)
+    if D.size == 0 or not np.isfinite(rate) or rate <= 0:
+        return D
+
+    n_bins, n_frames = D.shape
+    if n_frames <= 1:
+        return D
+
+    n_fft = int((n_bins - 1) * 2)
+    phase_advance = (2.0 * np.pi * float(hop_length) * np.arange(n_bins, dtype=np.float32) / float(n_fft)).astype(
+        np.float32
+    )
+
+    time_steps = np.arange(0, float(n_frames - 1), rate, dtype=np.float32)
+    out = np.zeros((n_bins, int(time_steps.size)), dtype=np.complex64)
+    phase = np.angle(D[:, 0]).astype(np.float32)
+
+    two_pi = float(2.0 * np.pi)
+    for t, step in enumerate(time_steps):
+        i = int(step)
+        frac = float(step - float(i))
+        if i + 1 < n_frames:
+            s0 = D[:, i]
+            s1 = D[:, i + 1]
+        else:
+            s0 = D[:, i]
+            s1 = D[:, i]
+
+        mag = ((1.0 - frac) * np.abs(s0) + frac * np.abs(s1)).astype(np.float32, copy=False)
+        p0 = np.angle(s0).astype(np.float32, copy=False)
+        p1 = np.angle(s1).astype(np.float32, copy=False)
+
+        dp = (p1 - p0 - phase_advance).astype(np.float32, copy=False)
+        dp = (dp - two_pi * np.round(dp / two_pi)).astype(np.float32, copy=False)
+        phase = (phase + phase_advance + dp).astype(np.float32, copy=False)
+        out[:, t] = (mag * np.exp(1j * phase)).astype(np.complex64, copy=False)
+
+    return out
+
+
+def _time_stretch_phase_vocoder(
+    x: np.ndarray,
+    *,
+    sr: int,
+    rate: float,
+    n_fft: int = 2048,
+    hop_length: int | None = None,
+) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    sr = int(sr)
+    rate = float(rate)
+    if x.size <= 1 or not np.isfinite(rate) or rate <= 0.0 or abs(rate - 1.0) < 1e-6:
+        return x.astype(np.float32, copy=False)
+
+    try:
+        from scipy import signal
+    except Exception:
+        return x.astype(np.float32, copy=False)
+
+    n_fft = int(max(256, min(int(n_fft), 8192)))
+    if hop_length is None:
+        hop_length = int(n_fft // 4)
+    hop_length = int(max(16, min(int(hop_length), n_fft - 1)))
+    noverlap = int(n_fft - hop_length)
+
+    if x.size < n_fft:
+        return x.astype(np.float32, copy=False)
+
+    _, _, Z = signal.stft(
+        x,
+        fs=float(sr),
+        window="hann",
+        nperseg=n_fft,
+        noverlap=noverlap,
+        boundary=None,
+        padded=False,
+    )
+    Z2 = _phase_vocoder(Z, rate=rate, hop_length=hop_length)
+    _, y = signal.istft(
+        Z2,
+        fs=float(sr),
+        window="hann",
+        nperseg=n_fft,
+        noverlap=noverlap,
+        input_onesided=True,
+    )
+    y = np.asarray(y, dtype=np.float32).reshape(-1)
+    return y if y.size else x.astype(np.float32, copy=False)
+
+
+def _pitch_shift_preserve_duration(x: np.ndarray, *, sr: int, semitones: float) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    sr = int(sr)
+    semis = float(semitones)
+    if x.size <= 1 or not np.isfinite(semis) or abs(semis) < 1e-6:
+        return x.astype(np.float32, copy=False)
+
+    rate = float(2.0 ** (semis / 12.0))
+    y = _time_stretch_phase_vocoder(x, sr=sr, rate=float(1.0 / rate))
+    y = _resample_to_length_linear(y, new_n=int(x.size))
+    return y.astype(np.float32, copy=False)
+
+
+def _peaking_eq_sos(*, sr: int, f0_hz: float, q: float, gain_db: float) -> np.ndarray:
+    """Return SOS for a peaking EQ biquad (RBJ cookbook)."""
+
+    sr = int(sr)
+    f0 = float(f0_hz)
+    qv = float(q)
+    gdb = float(gain_db)
+    if sr <= 0 or f0 <= 0.0 or qv <= 0.0:
+        raise ValueError("invalid peaking EQ params")
+
+    w0 = 2.0 * math.pi * (f0 / float(sr))
+    A = 10.0 ** (gdb / 40.0)
+    alpha = math.sin(w0) / (2.0 * qv)
+    c = math.cos(w0)
+
+    b0 = 1.0 + alpha * A
+    b1 = -2.0 * c
+    b2 = 1.0 - alpha * A
+    a0 = 1.0 + alpha / A
+    a1 = -2.0 * c
+    a2 = 1.0 - alpha / A
+
+    b = np.asarray([b0, b1, b2], dtype=np.float64) / float(a0)
+    a = np.asarray([1.0, a1 / a0, a2 / a0], dtype=np.float64)
+
+    try:
+        from scipy import signal
+
+        return signal.tf2sos(b, a)
+    except Exception:
+        return np.asarray([[b[0], b[1], b[2], 1.0, a[1], a[2]]], dtype=np.float64)
+
+
+def _eq_three_band(
+    x: np.ndarray,
+    *,
+    sr: int,
+    low_cut_hz: float,
+    mid_freq_hz: float,
+    mid_gain_db: float,
+    mid_q: float,
+    high_cut_hz: float,
+) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32).reshape(-1)
+    sr = int(sr)
+    if x.size <= 1:
+        return x.astype(np.float32, copy=False)
+
+    try:
+        from scipy import signal
+    except Exception:
+        return x.astype(np.float32, copy=False)
+
+    y = x.astype(np.float32, copy=False)
+    nyq = 0.5 * float(sr)
+
+    lch = float(low_cut_hz)
+    if np.isfinite(lch) and lch > 1.0 and lch < 0.95 * nyq:
+        sos = signal.butter(2, lch / nyq, btype="highpass", output="sos")
+        y = signal.sosfiltfilt(sos, y).astype(np.float32, copy=False)
+
+    mf = float(mid_freq_hz)
+    mg = float(mid_gain_db)
+    if np.isfinite(mf) and mf > 5.0 and mf < 0.95 * nyq and np.isfinite(mg) and abs(mg) > 1e-6:
+        sos = _peaking_eq_sos(sr=sr, f0_hz=mf, q=float(max(0.05, mid_q)), gain_db=mg)
+        y = signal.sosfiltfilt(sos, y).astype(np.float32, copy=False)
+
+    hch = float(high_cut_hz)
+    if np.isfinite(hch) and hch > 1.0 and hch < 0.95 * nyq:
+        sos = signal.butter(2, hch / nyq, btype="lowpass", output="sos")
+        y = signal.sosfiltfilt(sos, y).astype(np.float32, copy=False)
+
+    return y.astype(np.float32, copy=False)
+
+
 def _apply_edge_fades(x: np.ndarray, *, fade_in: int, fade_out: int) -> np.ndarray:
     x = np.asarray(x, dtype=np.float32).reshape(-1)
     n = int(x.size)
@@ -467,8 +696,12 @@ def _help_text() -> str:
         "  K: de-click (repair selection, or small window at cursor)\n"
         "  n: normalize peak to -1 dBFS (whole file)\n"
         "  +/-: gain ±1 dB (selection if present else whole file)\n"
+        "  W: apply polish profile (selection if present else whole file)\n"
+        "  P: pitch shift (preserve duration) (selection if present else whole file)\n"
+        "  Q: EQ (low cut + mid peak + high cut) (selection if present else whole file)\n"
         "\n"
         "  i: import layer WAV at cursor (max 4 layers total)\n"
+        "  q: regenerate layer at cursor (uses .credits.json if available)\n"
         "  y: cycle active layer\n"
         "  L: edit active layer params (gain/pan/fades/pitch)\n"
         "  Y: delete active layer\n"
@@ -735,6 +968,55 @@ def launch_editor(wav_path: str | Path) -> None:
         _push_edit("layer_select", {"active": int(st.active_layer) if st.active_layer is not None else None})
         _render()
 
+    def _load_credits_sidecar(audio_path: Path) -> dict[str, Any] | None:
+        sidecar = Path(audio_path).with_name(Path(audio_path).name + ".credits.json")
+        if not sidecar.exists():
+            return None
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _extract_gen_meta(credits: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not credits:
+            return None
+
+        try:
+            engine = str(credits.get("engine") or "").strip().lower()
+            prompt = str(credits.get("prompt") or "").strip()
+        except Exception:
+            return None
+        if not engine or not prompt:
+            return None
+
+        meta: dict[str, Any] = {"engine": engine, "prompt": prompt}
+
+        if credits.get("seed") is not None:
+            try:
+                meta["seed"] = int(credits.get("seed"))
+            except Exception:
+                meta["seed"] = None
+
+        sec = credits.get("seconds")
+        if sec is None:
+            try:
+                sec = (credits.get("analysis") or {}).get("seconds")
+            except Exception:
+                sec = None
+        if sec is not None:
+            try:
+                meta["seconds"] = float(sec)
+            except Exception:
+                pass
+
+        if credits.get("preset") is not None:
+            meta["preset"] = str(credits.get("preset"))
+
+        return meta
+
+    base_gen_meta = _extract_gen_meta(_load_credits_sidecar(wav_path))
+
     def _import_layer() -> None:
         ll = _layer_list()
         # Max 4 layers total: base + up to 3 overlays.
@@ -755,6 +1037,7 @@ def launch_editor(wav_path: str | Path) -> None:
         if int(sr2) != int(st.sample_rate):
             print(f"Layer sample rate {sr2} != project {st.sample_rate}; import uses original samples (no resample).")
         undo.push(st)
+        gen_meta = _extract_gen_meta(_load_credits_sidecar(path))
         rec = {
             "name": str(path.stem),
             "path": str(path),
@@ -764,6 +1047,7 @@ def launch_editor(wav_path: str | Path) -> None:
             "fade_in_ms": 0.0,
             "fade_out_ms": 0.0,
             "pitch_semitones": 0.0,
+            "gen": gen_meta,
             "audio": x2.astype(np.float32, copy=True),
         }
         ll.append(rec)
@@ -887,6 +1171,249 @@ def launch_editor(wav_path: str | Path) -> None:
                 out[off:end] += x2
 
         return out
+
+    def _apply_polish_profile() -> None:
+        from ..polish_profiles import POLISH_PROFILES
+        from ..postprocess import post_process_audio
+        from dataclasses import replace
+
+        print("Polish profiles:")
+        for k, obj in POLISH_PROFILES.items():
+            print(f"  {k}: {obj.title} — {obj.description}")
+
+        try:
+            key = input("Apply polish profile key (or 'off'): ").strip()
+        except Exception:
+            return
+        if not key or key.strip().lower() == "off":
+            return
+
+        prof = POLISH_PROFILES.get(key)
+        if prof is None:
+            print(f"Unknown polish profile: {key}")
+            return
+
+        patch = dict(prof.args or {})
+
+        rng = _sel_range()
+        if rng is None:
+            lo, hi = 0, int(st.audio.size)
+        else:
+            lo, hi = rng
+        if hi <= lo:
+            return
+
+        seg = st.audio[lo:hi].copy()
+        undo.push(st)
+        params = _post_params_from_patch(patch, neutral=False)
+
+        # In-editor polish should be length-preserving (avoid moving regions/layers).
+        params = replace(params, trim_silence=False)
+        y, _rep = post_process_audio(seg.astype(np.float32, copy=False), int(st.sample_rate), params)
+        y = _fit_to_length(_clip_mono(y), int(seg.size))
+
+        out = st.audio.copy()
+        out[lo:hi] = y
+        st.audio = _clip_mono(out)
+        _push_edit("polish_profile", {"key": str(key), "range": [int(lo), int(hi)]})
+        _render()
+
+    def _apply_pitch_shift_preserve_duration() -> None:
+        rng = _sel_range()
+        if rng is None:
+            lo, hi = 0, int(st.audio.size)
+        else:
+            lo, hi = rng
+        if hi <= lo:
+            return
+
+        try:
+            s = input("Pitch shift semitones (preserve duration): ").strip()
+        except Exception:
+            return
+        if not s:
+            return
+        try:
+            semis = float(s)
+        except Exception:
+            print("Invalid semitones.")
+            return
+
+        seg = st.audio[lo:hi].copy()
+        undo.push(st)
+        y = _pitch_shift_preserve_duration(seg, sr=int(st.sample_rate), semitones=float(semis))
+        y = _fit_to_length(_clip_mono(y), int(seg.size))
+
+        out = st.audio.copy()
+        out[lo:hi] = y
+        st.audio = _clip_mono(out)
+        _push_edit("pitch_shift", {"semitones": float(semis), "range": [int(lo), int(hi)]})
+        _render()
+
+    def _apply_eq_three_band() -> None:
+        rng = _sel_range()
+        if rng is None:
+            lo, hi = 0, int(st.audio.size)
+        else:
+            lo, hi = rng
+        if hi <= lo:
+            return
+
+        defaults = {
+            "low_cut_hz": 80.0,
+            "mid_freq_hz": 1200.0,
+            "mid_gain_db": 0.0,
+            "mid_q": 1.0,
+            "high_cut_hz": 16000.0,
+        }
+
+        try:
+            print("3-band EQ (low cut + mid peak + high cut). Press enter to keep defaults:")
+            lc = input(f"  low_cut_hz [{defaults['low_cut_hz']}]: ").strip()
+            mf = input(f"  mid_freq_hz [{defaults['mid_freq_hz']}]: ").strip()
+            mg = input(f"  mid_gain_db [{defaults['mid_gain_db']}]: ").strip()
+            mq = input(f"  mid_q [{defaults['mid_q']}]: ").strip()
+            hc = input(f"  high_cut_hz [{defaults['high_cut_hz']}]: ").strip()
+        except Exception:
+            return
+
+        def _f(v: str, d: float) -> float:
+            return float(d) if not v else float(v)
+
+        try:
+            low_cut_hz = _f(lc, defaults["low_cut_hz"])
+            mid_freq_hz = _f(mf, defaults["mid_freq_hz"])
+            mid_gain_db = _f(mg, defaults["mid_gain_db"])
+            mid_q = _f(mq, defaults["mid_q"])
+            high_cut_hz = _f(hc, defaults["high_cut_hz"])
+        except Exception:
+            print("Invalid EQ values.")
+            return
+
+        seg = st.audio[lo:hi].copy()
+        undo.push(st)
+        y = _eq_three_band(
+            seg,
+            sr=int(st.sample_rate),
+            low_cut_hz=float(low_cut_hz),
+            mid_freq_hz=float(mid_freq_hz),
+            mid_gain_db=float(mid_gain_db),
+            mid_q=float(mid_q),
+            high_cut_hz=float(high_cut_hz),
+        )
+        y = _fit_to_length(_clip_mono(y), int(seg.size))
+
+        out = st.audio.copy()
+        out[lo:hi] = y
+        st.audio = _clip_mono(out)
+        _push_edit(
+            "eq_three_band",
+            {
+                "low_cut_hz": float(low_cut_hz),
+                "mid_freq_hz": float(mid_freq_hz),
+                "mid_gain_db": float(mid_gain_db),
+                "mid_q": float(mid_q),
+                "high_cut_hz": float(high_cut_hz),
+                "range": [int(lo), int(hi)],
+            },
+        )
+        _render()
+
+    def _regenerate_layer_at_cursor() -> None:
+        ll = _layer_list()
+        if len(ll) >= 3:
+            print("Max overlay layers reached (3). Delete a layer first.")
+            return
+
+        meta: dict[str, Any] | None = None
+        active = _active_layer_obj()
+        if active is not None and isinstance(active.get("gen"), dict):
+            meta = dict(active.get("gen") or {})
+        if meta is None and base_gen_meta is not None:
+            meta = dict(base_gen_meta)
+
+        engine = str((meta or {}).get("engine") or "").strip().lower()
+        prompt = str((meta or {}).get("prompt") or "").strip()
+        seconds = float((meta or {}).get("seconds") or max(0.25, float(st.audio.size) / float(st.sample_rate)))
+        seed = (meta or {}).get("seed")
+        preset = (meta or {}).get("preset")
+
+        if not engine:
+            try:
+                engine = input("Engine (e.g. rfxgen/diffusers/layered): ").strip().lower()
+            except Exception:
+                return
+        if not prompt:
+            try:
+                prompt = input("Prompt: ").strip()
+            except Exception:
+                return
+        if not engine or not prompt:
+            return
+
+        try:
+            sec_in = input(f"Seconds [{seconds:.3f}]: ").strip()
+            if sec_in:
+                seconds = float(sec_in)
+        except Exception:
+            pass
+
+        try:
+            seed_in = input(f"Seed [{seed if seed is not None else ''}]: ").strip()
+            if seed_in:
+                seed = int(seed_in)
+        except Exception:
+            pass
+
+        from ..engine_registry import generate_wav
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_wav = Path(f.name)
+
+        try:
+            res = generate_wav(
+                engine,
+                prompt=str(prompt),
+                seconds=float(max(0.05, seconds)),
+                seed=(None if seed is None else int(seed)),
+                out_wav=tmp_wav,
+                candidates=1,
+                preset=(str(preset) if preset is not None else None),
+            )
+            x2, sr2 = read_wav_mono(res.wav_path)
+        finally:
+            try:
+                tmp_wav.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if int(sr2) != int(st.sample_rate):
+            x2 = _resample_to_sr(x2, src_sr=int(sr2), dst_sr=int(st.sample_rate))
+
+        undo.push(st)
+        gen_meta = {
+            "engine": str(engine),
+            "prompt": str(prompt),
+            "seconds": float(seconds),
+            "seed": (None if seed is None else int(seed)),
+            "preset": (str(preset) if preset is not None else None),
+        }
+        rec = {
+            "name": f"regen_{engine}",
+            "path": None,
+            "offset": int(st.cursor),
+            "gain_db": 0.0,
+            "pan": 0.0,
+            "fade_in_ms": 0.0,
+            "fade_out_ms": 0.0,
+            "pitch_semitones": 0.0,
+            "gen": gen_meta,
+            "audio": x2.astype(np.float32, copy=True),
+        }
+        ll.append(rec)
+        _set_active_layer(len(ll) - 1)
+        _push_edit("layer_regenerate", {"name": rec["name"], "offset": int(rec["offset"]), "gen": gen_meta})
+        _render()
 
     def _active_region_obj() -> dict[str, Any] | None:
         if st.active_region is None:
@@ -1097,29 +1624,34 @@ def launch_editor(wav_path: str | Path) -> None:
                 out.append(ch)
         return "".join(out) or "region"
 
-    def _post_params_from_patch(patch: dict[str, Any]) -> PostProcessParams:
+    def _post_params_from_patch(patch: dict[str, Any], *, neutral: bool) -> PostProcessParams:
         from ..postprocess import PostProcessParams
 
-        # Neutral baseline; the chain's post_stack decides what actually runs.
-        params = PostProcessParams(
-            trim_silence=False,
-            fade_ms=0,
-            normalize_rms_db=None,
-            normalize_peak_db=-1.0,
-            highpass_hz=None,
-            lowpass_hz=None,
-            denoise_strength=0.0,
-            transient_amount=0.0,
-            transient_sustain=0.0,
-            exciter_amount=0.0,
-            multiband=False,
-            reverb_preset="off",
-            reverb_mix=0.0,
-            reverb_time_s=1.2,
-            compressor_threshold_db=None,
-            limiter_ceiling_db=None,
-            post_stack="final_clip",
-            noise_bed_db=None,
+        # For region FX export hooks we want to avoid surprises like trimming/normalizing,
+        # but for polish profiles we want normal post defaults.
+        params = (
+            PostProcessParams(
+                trim_silence=False,
+                fade_ms=0,
+                normalize_rms_db=None,
+                normalize_peak_db=-1.0,
+                highpass_hz=None,
+                lowpass_hz=None,
+                denoise_strength=0.0,
+                transient_amount=0.0,
+                transient_sustain=0.0,
+                exciter_amount=0.0,
+                multiband=False,
+                reverb_preset="off",
+                reverb_mix=0.0,
+                reverb_time_s=1.2,
+                compressor_threshold_db=None,
+                limiter_ceiling_db=None,
+                post_stack="final_clip",
+                noise_bed_db=None,
+            )
+            if bool(neutral)
+            else PostProcessParams()
         )
 
         def _get(k: str):
@@ -1153,6 +1685,8 @@ def launch_editor(wav_path: str | Path) -> None:
             params = params.__class__(**{**params.__dict__, "transient_sustain": float(_get("transient_sustain"))})
         if _get("exciter_amount") is not None:
             params = params.__class__(**{**params.__dict__, "exciter_amount": float(_get("exciter_amount"))})
+        if _get("exciter_cutoff_hz") is not None:
+            params = params.__class__(**{**params.__dict__, "exciter_cutoff_hz": float(_get("exciter_cutoff_hz"))})
         if _get("multiband") is not None:
             params = params.__class__(**{**params.__dict__, "multiband": bool(_get("multiband"))})
         if _get("mb_low_hz") is not None:
@@ -1169,6 +1703,12 @@ def launch_editor(wav_path: str | Path) -> None:
             params = params.__class__(**{**params.__dict__, "multiband_comp_threshold_db": float(_get("mb_comp_threshold_db"))})
         if _get("mb_comp_ratio") is not None:
             params = params.__class__(**{**params.__dict__, "multiband_comp_ratio": float(_get("mb_comp_ratio"))})
+        if _get("mb_comp_attack_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "multiband_comp_attack_ms": float(_get("mb_comp_attack_ms"))})
+        if _get("mb_comp_release_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "multiband_comp_release_ms": float(_get("mb_comp_release_ms"))})
+        if _get("mb_comp_makeup_db") is not None:
+            params = params.__class__(**{**params.__dict__, "multiband_comp_makeup_db": float(_get("mb_comp_makeup_db"))})
         if _get("reverb") is not None:
             params = params.__class__(**{**params.__dict__, "reverb_preset": str(_get("reverb"))})
         if _get("reverb_mix") is not None:
@@ -1181,12 +1721,48 @@ def launch_editor(wav_path: str | Path) -> None:
             params = params.__class__(**{**params.__dict__, "compressor_threshold_db": float(_get("compressor_threshold_db"))})
         if _get("compressor_ratio") is not None:
             params = params.__class__(**{**params.__dict__, "compressor_ratio": float(_get("compressor_ratio"))})
+        if _get("compressor_attack_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "compressor_attack_ms": float(_get("compressor_attack_ms"))})
+        if _get("compressor_release_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "compressor_release_ms": float(_get("compressor_release_ms"))})
         if _get("compressor_makeup_db") is not None:
             params = params.__class__(**{**params.__dict__, "compressor_makeup_db": float(_get("compressor_makeup_db"))})
         if _get("limiter_ceiling_db") is not None:
             params = params.__class__(**{**params.__dict__, "limiter_ceiling_db": float(_get("limiter_ceiling_db"))})
         if _get("noise_bed_db") is not None:
             params = params.__class__(**{**params.__dict__, "noise_bed_db": float(_get("noise_bed_db"))})
+        if _get("noise_bed_seed") is not None:
+            params = params.__class__(**{**params.__dict__, "noise_bed_seed": int(_get("noise_bed_seed"))})
+        if _get("formant_shift") is not None:
+            params = params.__class__(**{**params.__dict__, "formant_shift": float(_get("formant_shift"))})
+        if _get("creature_size") is not None:
+            params = params.__class__(**{**params.__dict__, "creature_size": float(_get("creature_size"))})
+        if _get("texture_preset") is not None:
+            params = params.__class__(**{**params.__dict__, "texture_preset": str(_get("texture_preset"))})
+        if _get("texture_amount") is not None:
+            params = params.__class__(**{**params.__dict__, "texture_amount": float(_get("texture_amount"))})
+        if _get("texture_grain_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "texture_grain_ms": float(_get("texture_grain_ms"))})
+        if _get("texture_spray") is not None:
+            params = params.__class__(**{**params.__dict__, "texture_spray": float(_get("texture_spray"))})
+        if _get("loop") is not None:
+            params = params.__class__(**{**params.__dict__, "loop_clean": bool(_get("loop"))})
+        if _get("loop_crossfade_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "loop_crossfade_ms": int(_get("loop_crossfade_ms"))})
+        if _get("loop_crossfade_curve") is not None:
+            params = params.__class__(**{**params.__dict__, "loop_crossfade_curve": str(_get("loop_crossfade_curve"))})
+        if _get("duck_bed") is not None:
+            params = params.__class__(**{**params.__dict__, "duck_bed": bool(_get("duck_bed"))})
+        if _get("duck_bed_split_hz") is not None:
+            params = params.__class__(**{**params.__dict__, "duck_bed_split_hz": float(_get("duck_bed_split_hz"))})
+        if _get("duck_bed_amount") is not None:
+            params = params.__class__(**{**params.__dict__, "duck_bed_amount": float(_get("duck_bed_amount"))})
+        if _get("duck_bed_attack_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "duck_bed_attack_ms": float(_get("duck_bed_attack_ms"))})
+        if _get("duck_bed_release_ms") is not None:
+            params = params.__class__(**{**params.__dict__, "duck_bed_release_ms": float(_get("duck_bed_release_ms"))})
+        if _get("compressor_follower_mode") is not None:
+            params = params.__class__(**{**params.__dict__, "compressor_follower_mode": str(_get("compressor_follower_mode"))})
         if _get("post_stack") is not None:
             params = params.__class__(**{**params.__dict__, "post_stack": str(_get("post_stack"))})
 
@@ -1227,7 +1803,7 @@ def launch_editor(wav_path: str | Path) -> None:
 
         from ..postprocess import post_process_audio
 
-        params = _post_params_from_patch(patch)
+        params = _post_params_from_patch(patch, neutral=True)
         y, _rep = post_process_audio(x.astype(np.float32, copy=False), int(sr), params)
         return y.astype(np.float32, copy=False)
 
@@ -1787,8 +2363,24 @@ def launch_editor(wav_path: str | Path) -> None:
             _edit_active_layer_params()
             return
 
+        if key in {"q"}:
+            _regenerate_layer_at_cursor()
+            return
+
         if key in {"Y"}:
             _delete_active_layer()
+            return
+
+        if key in {"W"}:
+            _apply_polish_profile()
+            return
+
+        if key in {"P"}:
+            _apply_pitch_shift_preserve_duration()
+            return
+
+        if key in {"Q"}:
+            _apply_eq_three_band()
             return
 
         if key in {"c"}:
