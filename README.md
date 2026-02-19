@@ -11,6 +11,47 @@ It combines **AI prompt-to-audio**, **procedural / DSP engines**, and **post-pro
 
 App name: **SÖNDBÖUND** (Python module name: `soundgen`).
 
+## Quick demo (10 seconds)
+
+After installing (see **Minimal install** below), generate a polished coin pickup:
+
+```powershell
+python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out outputs\coin.wav
+```
+
+Or launch the Control Panel UI:
+
+```powershell
+python -m soundgen.web
+```
+
+## Minimal install (Windows)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Recommended (does the same + diagnostics):
+
+```powershell
+./scripts/setup.ps1
+```
+
+## Feature matrix
+
+| Area | What you get |
+|---|---|
+| **Engines** | AI prompt-to-audio (`diffusers`, `stable_audio_open`), procedural presets (`rfxgen`), hybrid layering (`hybrid`, `layered`), sample remix (`samplelib`), DSP synth (`synth`), optional API engine (`replicate`) |
+| **Workflows** | CLI-first generation, batch manifests (JSON/CSV), doc → prompt generation (`pre_gen_sound/`) |
+| **Quality** | Deterministic seeds, best-of-N + QA selection, post-processing + named polish profiles |
+| **Editing** | Built-in editor (trim/fade/normalize, regions + export) + Control Panel in-memory audition |
+| **Export** | WAV/MP3/FLAC/OGG (ffmpeg for some formats) + Minecraft pack export (`.ogg` + `sounds.json` + optional subtitles + credits) |
+| **UI** | Gradio Control Panel, legacy web UI, Windows desktop wrapper (pywebview) |
+| **Extensibility** | Engine plugin loader + JSON-driven presets and FX chains |
+| **AI helper (optional)** | Local-first Copilot chat (Ollama) + optional OpenAI-compatible/Azure OpenAI, with app-aware context retrieval |
+
 ## At a glance
 
 - **One prompt → one sound**, or **best-of-N** selection with QA scoring.
@@ -94,14 +135,25 @@ python -m soundgen.generate --engine rfxgen --prompt "coin pickup" --post --out 
 python -m soundgen.generate --engine rfxgen --minecraft --namespace mymod --event ui.coin --subtitle "Coin" --prompt "coin pickup" --post
 ```
 
-## Screenshots (add yours)
+## Screenshots / GIFs
 
 This repo intentionally does not commit generated audio or packs. Screenshots/GIFs are welcome.
 
-- Web UI: `python -m soundgen.web`
-- Desktop UI: `python -m soundgen.desktop`
+Current visuals (already in-repo assets):
 
-Terminal output / run logs are also welcome — anything that makes the project feel “alive.”
+![Desktop icon](.examples/icon.png)
+
+![UI background asset](.examples/background.png)
+
+Want to contribute real UI screenshots? Here are two easy captures to add:
+
+- **Web UI**: run `python -m soundgen.web` and screenshot the Control Panel.
+- **Desktop UI**: run `python -m soundgen.desktop` and screenshot the embedded window.
+
+Suggested convention:
+
+- Put images in `.examples/` (e.g. `.examples/web_ui.png`, `.examples/desktop_ui.png`) and open a PR.
+- Keep them reasonably sized (PNG preferred; GIF optional).
 
 ## Web UI (Control Panel)
 
@@ -258,8 +310,11 @@ See the full status + milestones in [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 
-- Fork the repo and create a feature branch.
-- Keep changes small and focused; add docs/examples when behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, repo structure, and “how to add” guides (engines/presets/polish profiles).
+
+Quick checklist:
+
+- Keep changes small and focused; update docs/examples when behavior changes.
 - Before opening a PR, run:
 	- `python -m compileall -q src/soundgen`
 	- `python -m soundgen.doctor`
