@@ -77,7 +77,7 @@ $iconPng = ".examples/icon.png"
 $iconIco = Join-Path $WorkDir "app.ico"
 if (Test-Path $iconPng) {
   if (!(Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
-  python -c "from PIL import Image; import os; p=r'$iconPng'; o=r'$iconIco'; im=Image.open(p); im.save(o, sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
+  & $python -c "from PIL import Image; import os; p=r'$iconPng'; o=r'$iconIco'; im=Image.open(p); im.save(o, sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
   if (Test-Path $iconIco) {
     $commonArgs += @("--icon", $iconIco)
   }
