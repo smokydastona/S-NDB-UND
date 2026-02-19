@@ -59,6 +59,11 @@ Why it matters:
 - Airwindows (mostly VST; DSP concepts still valuable): https://github.com/airwindows/airwindows
   - Hundreds of minimalist DSP plugins; great learning resource
 
+## Registries / discovery
+
+- Open Audio Stack Registry: https://github.com/open-audio-stack/open-audio-stack-registry
+  - Curated metadata for audio plugins/tools; useful for discovery and categorization
+
 ## Practical host architecture advice
 
 If you’re building an editor/engine, a durable approach is:
