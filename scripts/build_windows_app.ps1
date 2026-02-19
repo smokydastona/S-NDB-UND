@@ -4,7 +4,8 @@ Param(
   [switch]$Clean,
   [switch]$SkipBackend,
   [switch]$SkipElectron,
-  [switch]$Store
+  [switch]$Store,
+  [switch]$Portable
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +33,8 @@ function Invoke-BackendBuild {
 
 function Invoke-ElectronBuild {
   param(
-    [switch]$Store
+    [switch]$Store,
+    [switch]$Portable
   )
 
   Write-Output "[build_windows_app] Building Electron installer (electron-builder)..."
@@ -47,9 +49,16 @@ function Invoke-ElectronBuild {
     npm install
     if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)." }
 
+    if ($Store -and $Portable) {
+      throw "Choose one: -Store or -Portable (not both)."
+    }
+
     if ($Store) {
       npm run dist:store
       if ($LASTEXITCODE -ne 0) { throw "npm run dist:store failed (exit $LASTEXITCODE)." }
+    } elseif ($Portable) {
+      npm run dist:portable
+      if ($LASTEXITCODE -ne 0) { throw "npm run dist:portable failed (exit $LASTEXITCODE)." }
     } else {
       npm run dist
       if ($LASTEXITCODE -ne 0) { throw "npm run dist failed (exit $LASTEXITCODE)." }
@@ -71,7 +80,7 @@ try {
   }
 
   if (-not $SkipElectron) {
-    Invoke-ElectronBuild -Store:$Store
+    Invoke-ElectronBuild -Store:$Store -Portable:$Portable
   } else {
     Write-Output "[build_windows_app] Skipping Electron build (-SkipElectron)."
   }

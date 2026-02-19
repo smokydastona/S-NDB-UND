@@ -12,7 +12,9 @@
     "pack": "npm run prep-backend && electron-builder --dir",
     "dist": "npm run prep-backend && electron-builder",
     "pack:store": "npm run prep-backend && electron-builder --win appx --dir",
-    "dist:store": "npm run prep-backend && electron-builder --win appx"
+    "dist:store": "npm run prep-backend && electron-builder --win appx",
+    "pack:portable": "npm run prep-backend && electron-builder --win portable --dir",
+    "dist:portable": "npm run prep-backend && electron-builder --win portable"
   },
   "dependencies": {
     "electron-updater": "^6.3.0"

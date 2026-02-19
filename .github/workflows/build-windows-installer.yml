@@ -46,7 +46,7 @@ jobs:
         run: |
           npm install
           npm run prep-backend
-          npx electron-builder --publish never
+          npx electron-builder --win nsis portable --publish never
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4

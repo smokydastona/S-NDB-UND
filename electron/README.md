@@ -92,6 +92,12 @@ To build a Windows Store AppX instead of an NSIS installer:
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_app.ps1 -Clean -Store
 ```
 
+To build a portable EXE (no installer):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_app.ps1 -Clean -Portable
+```
+
 1) Build the backend EXE (from repo root):
 
 ```powershell
@@ -107,6 +113,16 @@ npm run dist
 ```
 
 The output will be in `electron/dist/`.
+
+## Build a portable EXE
+
+From repo root:
+
+```powershell
+cd electron
+npm install
+npm run dist:portable
+```
 
 ## Build a Windows Store package (AppX)
 
