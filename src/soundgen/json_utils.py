@@ -79,32 +79,7 @@ def loads_json_object_lenient(raw: str, *, context: str) -> dict[str, Any]:
     if not text:
         return {}
 
-    def _loads(s: str) -> Any:
-        return json.loads(s)
-
-    try:
-        obj = _loads(text)
-    except json.JSONDecodeError as e1:
-        msg = str(e1)
-        if "Bad Unicode escape" in msg or "Invalid \\escape" in msg:
-            fixed = _escape_invalid_backslashes_in_json_strings(text)
-            try:
-                obj = _loads(fixed)
-            except json.JSONDecodeError as e2:
-                raise JsonParseError(
-                    context=context,
-                    original=text,
-                    message=(
-                        f"Invalid JSON ({e2}). If you pasted a Windows path, escape backslashes: "
-                        f'"C:\\\\Users\\\\name\\\\file.wav" (or use forward slashes: "C:/Users/name/file.wav").'
-                    ),
-                ) from e1
-        else:
-            raise JsonParseError(
-                context=context,
-                original=text,
-                message=f"Invalid JSON ({e1}).",
-            ) from e1
+    obj = loads_json_lenient(text, context=context)
 
     if not isinstance(obj, dict):
         raise JsonParseError(
@@ -114,3 +89,34 @@ def loads_json_object_lenient(raw: str, *, context: str) -> dict[str, Any]:
         )
 
     return dict(obj)
+
+
+def loads_json_lenient(raw: str, *, context: str) -> Any:
+    """Parse JSON from a user-provided string with a targeted Windows-path fix."""
+
+    text = str(raw or "").strip()
+    if not text:
+        return None
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e1:
+        msg = str(e1)
+        if "Bad Unicode escape" in msg or "Invalid \\escape" in msg:
+            fixed = _escape_invalid_backslashes_in_json_strings(text)
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError as e2:
+                raise JsonParseError(
+                    context=context,
+                    original=text,
+                    message=(
+                        f"Invalid JSON ({e2}). If you pasted a Windows path, escape backslashes: "
+                        f'"C:\\\\Users\\\\name\\\\file.wav" (or use forward slashes: "C:/Users/name/file.wav").'
+                    ),
+                ) from e1
+        raise JsonParseError(
+            context=context,
+            original=text,
+            message=f"Invalid JSON ({e1}).",
+        ) from e1

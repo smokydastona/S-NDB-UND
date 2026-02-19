@@ -475,7 +475,12 @@ def get_fx_module_v2(module_id: str) -> FxModuleV2 | None:
 
 def load_fx_chain_v2_json(path: str | Path) -> FxChainV2:
     p = Path(path)
-    obj = json.loads(p.read_text(encoding="utf-8"))
+    from .json_utils import JsonParseError, loads_json_lenient
+
+    try:
+        obj = loads_json_lenient(p.read_text(encoding="utf-8"), context=f"fx chain JSON ({p})")
+    except JsonParseError as e:
+        raise FxChainV2FormatError(str(e)) from e
     if not isinstance(obj, dict):
         raise FxChainV2FormatError("fx chain v2 json must be an object")
 

@@ -23,7 +23,12 @@ def _now_utc_iso() -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    from .json_utils import JsonParseError, loads_json_lenient
+
+    try:
+        data = loads_json_lenient(path.read_text(encoding="utf-8"), context=f"project JSON ({path})")
+    except JsonParseError as e:
+        raise ValueError(str(e)) from e
     return data if isinstance(data, dict) else {}
 
 

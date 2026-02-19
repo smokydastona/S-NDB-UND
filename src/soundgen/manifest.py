@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from .json_utils import JsonParseError, loads_json_lenient
+
 
 @dataclass(frozen=True)
 class ManifestItem:
@@ -152,7 +154,10 @@ def load_manifest(path: Path) -> list[ManifestItem]:
         raise FileNotFoundError(path)
 
     if path.suffix.lower() == ".json":
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = loads_json_lenient(path.read_text(encoding="utf-8"), context=f"manifest JSON ({path})")
+        except JsonParseError as e:
+            raise ValueError(str(e)) from e
         if isinstance(data, dict) and isinstance(data.get("items"), list):
             items = data["items"]
         elif isinstance(data, list):
