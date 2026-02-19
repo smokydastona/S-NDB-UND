@@ -34,20 +34,50 @@ function copyDir(src, dst) {
   }
 }
 
+function listDirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+function newestMatchingDir(parentDir, prefix) {
+  const dirs = listDirs(parentDir)
+    .filter((n) => n === prefix || n.startsWith(prefix + '-'))
+    .map((n) => {
+      const p = path.join(parentDir, n);
+      let m = 0;
+      try { m = fs.statSync(p).mtimeMs || 0; } catch {}
+      return { name: n, fullPath: p, mtimeMs: m };
+    })
+    .sort((a, b) => (b.mtimeMs - a.mtimeMs));
+
+  return dirs.length > 0 ? dirs[0] : null;
+}
+
 function main() {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const distDir = path.join(repoRoot, 'dist');
 
-  // Default backend output from scripts/build_exe.ps1
+  // Destination folder name (stable) used by Electron runtime.
   const backendFolderName = process.env.SOUNDGEN_BACKEND_FOLDER || 'SÖNDBÖUND';
-  const srcBackend = path.join(distDir, backendFolderName);
+
+  // Source folder may be versioned (e.g. SÖNDBÖUND-123). Pick the newest match.
+  const srcOverride = String(process.env.SOUNDGEN_BACKEND_SRC_FOLDER || '').trim();
+  const srcBackend = srcOverride
+    ? path.join(distDir, srcOverride)
+    : (newestMatchingDir(distDir, backendFolderName) || {}).fullPath;
 
   const electronDir = path.join(repoRoot, 'electron');
   const dstBackendRoot = path.join(electronDir, 'backend');
   const dstBackend = path.join(dstBackendRoot, backendFolderName);
 
-  if (!exists(srcBackend)) {
-    console.error(`[prepare-backend] Missing backend folder: ${srcBackend}`);
+  if (!srcBackend || !exists(srcBackend)) {
+    console.error(`[prepare-backend] Missing backend folder under dist/.`);
+    console.error(`[prepare-backend] Looked for: ${path.join(distDir, backendFolderName)} (or versioned variants)`);
     console.error(`[prepare-backend] Build it first: powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1 -Clean`);
     process.exit(2);
   }
