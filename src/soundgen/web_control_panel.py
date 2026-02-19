@@ -24,6 +24,7 @@ from .ai_assistant import (
     ollama_reachable,
 )
 from .ai_context import build_app_context
+from .ai_index import build_or_update_index
 from .engine_registry import available_engines, generate_wav
 from .io_utils import convert_audio_with_ffmpeg, read_wav_mono, write_wav
 from .postprocess import PostProcessParams, post_process_audio
@@ -1212,6 +1213,7 @@ def build_demo_control_panel() -> gr.Blocks:
                     ai_api_version = gr.Textbox(value="2024-02-15-preview", label="Azure API version (Azure only)")
                     ai_temperature = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
                     ai_setup_btn = gr.Button("Setup local Copilot (Ollama)")
+                    ai_reindex_btn = gr.Button("Rebuild Copilot index")
 
                 ai_chat = gr.Chatbot(label="Chat", height=360)
                 ai_msg = gr.Textbox(value="", label="Message")
@@ -1456,6 +1458,15 @@ def build_demo_control_panel() -> gr.Blocks:
             inputs=[ai_endpoint, ai_model],
             outputs=[ai_status],
         )
+
+        def _ai_reindex():
+            try:
+                _ = build_or_update_index(force=True)
+                return "OK - index rebuilt"
+            except Exception as e:
+                return f"Error: {e}"
+
+        ai_reindex_btn.click(fn=_ai_reindex, inputs=[], outputs=[ai_status])
 
         ai_send_btn.click(
             fn=_ai_send,

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .ai_index import build_or_update_index, top_matching_files
+
 
 @dataclass(frozen=True)
 class ContextDoc:
@@ -274,10 +276,9 @@ def build_app_context(
         excerpt = _excerpt_around_terms(best_text, terms, max_chars=per_doc_max_chars)
         candidates.append((s, doc.rel_path, excerpt))
 
-    # Optional lightweight local RAG: scan docs/ + key modules and pull top snippets.
+    # Local RAG: prefer using the on-disk index (fast) to pick top files to excerpt.
     scan_enabled = str(os.environ.get("SOUNDGEN_AI_CONTEXT_SCAN", "1")).strip().lower() not in {"0", "false", "off", "no"}
     if scan_enabled and terms:
-        # Only scan the first repo root that looks like a dev checkout.
         scan_root = None
         for r in roots:
             try:
@@ -288,21 +289,31 @@ def build_app_context(
                 continue
 
         if scan_root is not None:
-            rag_items = _iter_rag_candidates(scan_root)
-            # Keep scan bounded for responsiveness.
-            max_files = 40
-            per_file_read = max(6000, int(per_doc_max_chars * 2))
+            idx_enabled = str(os.environ.get("SOUNDGEN_AI_INDEX", "1")).strip().lower() not in {"0", "false", "off", "no"}
+            ranked_rels: list[str] = []
+            if idx_enabled:
+                try:
+                    _ = build_or_update_index(force=False)
+                    ranked_rels = top_matching_files(query=query, k=14)
+                except Exception:
+                    ranked_rels = []
 
-            for rel, p, weight in rag_items[:max_files]:
+            # Fallback: bounded scan order (less accurate, but no index needed).
+            if not ranked_rels:
+                rag_items = _iter_rag_candidates(scan_root)
+                ranked_rels = [rel for rel, _, _ in rag_items[:40]]
+
+            per_file_read = max(9000, int(per_doc_max_chars * 3))
+            for rel in ranked_rels:
+                p = scan_root / rel
                 txt = _read_text_best_effort(p, max_chars=per_file_read)
                 if not txt:
                     continue
-                s = _score_text(txt, terms) * float(weight)
+                s = _score_text(txt, terms)
                 if s <= 0.0:
                     continue
                 excerpt = _excerpt_around_terms(txt, terms, max_chars=per_doc_max_chars)
-                # Mark these differently so we can prioritize curated docs.
-                candidates.append((s, rel, excerpt))
+                candidates.append((float(s), rel, excerpt))
 
     # Pick top docs by score.
     candidates.sort(key=lambda x: x[0], reverse=True)
