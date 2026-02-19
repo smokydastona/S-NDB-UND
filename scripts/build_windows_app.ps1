@@ -3,7 +3,8 @@ Param(
   [string]$Version = "",
   [switch]$Clean,
   [switch]$SkipBackend,
-  [switch]$SkipElectron
+  [switch]$SkipElectron,
+  [switch]$Store
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,10 @@ function Invoke-BackendBuild {
 }
 
 function Invoke-ElectronBuild {
+  param(
+    [switch]$Store
+  )
+
   Write-Output "[build_windows_app] Building Electron installer (electron-builder)..."
 
   Push-Location (Join-Path $repoRoot "electron")
@@ -42,8 +47,13 @@ function Invoke-ElectronBuild {
     npm install
     if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)." }
 
-    npm run dist
-    if ($LASTEXITCODE -ne 0) { throw "npm run dist failed (exit $LASTEXITCODE)." }
+    if ($Store) {
+      npm run dist:store
+      if ($LASTEXITCODE -ne 0) { throw "npm run dist:store failed (exit $LASTEXITCODE)." }
+    } else {
+      npm run dist
+      if ($LASTEXITCODE -ne 0) { throw "npm run dist failed (exit $LASTEXITCODE)." }
+    }
 
     Write-Output "[build_windows_app] Output folder: electron\\dist\\"
   }
@@ -61,7 +71,7 @@ try {
   }
 
   if (-not $SkipElectron) {
-    Invoke-ElectronBuild
+    Invoke-ElectronBuild -Store:$Store
   } else {
     Write-Output "[build_windows_app] Skipping Electron build (-SkipElectron)."
   }

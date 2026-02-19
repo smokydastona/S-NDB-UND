@@ -17,8 +17,10 @@ async function main() {
   const electronDir = path.join(repoRoot, 'electron');
   const buildDir = path.join(electronDir, 'build');
   const outIco = path.join(buildDir, 'icon.ico');
+  const appxDir = path.join(buildDir, 'appx');
 
   fs.mkdirSync(buildDir, { recursive: true });
+  fs.mkdirSync(appxDir, { recursive: true });
 
   if (!exists(srcPng)) {
     console.warn(`[prepare-assets] Missing icon source PNG: ${srcPng}`);
@@ -31,6 +33,23 @@ async function main() {
   console.log(`[prepare-assets] Generating ICO: ${srcPng} -> ${outIco}`);
   const buf = await pngToIco(srcPng);
   fs.writeFileSync(outIco, buf);
+
+  // Minimal AppX assets (placeholders). If you add proper-sized assets manually,
+  // this script will not overwrite them.
+  const appxAssets = [
+    'StoreLogo.png',
+    'Square150x150Logo.png',
+    'Square44x44Logo.png',
+    'Wide310x150Logo.png'
+  ];
+
+  for (const name of appxAssets) {
+    const dst = path.join(appxDir, name);
+    if (!exists(dst)) {
+      console.log(`[prepare-assets] Creating AppX asset: ${srcPng} -> ${dst}`);
+      fs.copyFileSync(srcPng, dst);
+    }
+  }
 
   console.log('[prepare-assets] Done');
 }

@@ -86,6 +86,12 @@ From repo root:
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_app.ps1 -Clean
 ```
 
+To build a Windows Store AppX instead of an NSIS installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_app.ps1 -Clean -Store
+```
+
 1) Build the backend EXE (from repo root):
 
 ```powershell
@@ -101,6 +107,22 @@ npm run dist
 ```
 
 The output will be in `electron/dist/`.
+
+## Build a Windows Store package (AppX)
+
+Electron Builder supports AppX (Windows Store) packaging.
+
+From repo root:
+
+```powershell
+cd electron
+npm install
+npm run dist:store
+```
+
+Notes:
+- AppX assets can be provided under `electron/build/appx/` (the build script creates basic placeholders by copying `.examples/icon.png`).
+- For actual Store submission you will need to reserve your app identity in Partner Center; you may also need to adjust AppX metadata in the Electron Builder `build.appx` config.
 
 ## Code signing (optional but strongly recommended)
 

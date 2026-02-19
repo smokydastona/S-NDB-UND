@@ -10,7 +10,9 @@
     "prep-assets": "node scripts/prepare-assets.js",
     "prep-backend": "node scripts/prepare-assets.js && node scripts/prepare-backend.js",
     "pack": "npm run prep-backend && electron-builder --dir",
-    "dist": "npm run prep-backend && electron-builder"
+    "dist": "npm run prep-backend && electron-builder",
+    "pack:store": "npm run prep-backend && electron-builder --win appx --dir",
+    "dist:store": "npm run prep-backend && electron-builder --win appx"
   },
   "dependencies": {
     "electron-updater": "^6.3.0"
@@ -49,6 +51,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "appx": {
+      "applicationId": "Sondbound"
     },
     "publish": [
       {
