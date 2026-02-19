@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 
 from .web import build_demo
@@ -67,7 +68,29 @@ def run_desktop(argv: list[str] | None = None) -> int:
         local_url = f"http://{host}:{port}"
 
     webview.create_window("SÖNDBÖUND", local_url, width=1200, height=800)
-    webview.start()
+
+    # On Windows, pywebview may default to the WinForms backend, which depends on
+    # pythonnet/.NET. Packaged builds can break if the runtime/DLLs are mismatched.
+    # Prefer Edge Chromium (WebView2) first, then fall back to mshtml.
+    preferred_gui = str(os.environ.get("SOUNDGEN_DESKTOP_GUI", "")).strip().lower() or None
+    gui_candidates = [preferred_gui, "edgechromium", "mshtml", None]
+    last_error: Exception | None = None
+    for gui in gui_candidates:
+        if gui in {"", "none"}:
+            gui = None
+        try:
+            if gui is None:
+                webview.start()
+            else:
+                webview.start(gui=gui)
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error is not None:
+        raise last_error
     return 0
 
 
