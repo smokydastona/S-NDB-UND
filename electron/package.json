@@ -1,0 +1,14 @@
+{
+  "name": "sondbound-electron",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Electron shell for SÖNDBÖUND (Python/Gradio backend)",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^30.0.0"
+  }
+}

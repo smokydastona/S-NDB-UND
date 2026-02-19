@@ -55,6 +55,7 @@ def _print_help() -> None:
         "  SÖNDBÖUND.exe finetune <args>  (Fine-tuning helpers: train wrapper + validation preview)\n"
         "  SÖNDBÖUND.exe web <args>       (Gradio UI in your browser)\n"
         "  SÖNDBÖUND.exe desktop <args>   (UI in an embedded desktop window)\n"
+        "  SÖNDBÖUND.exe serve <args>     (start local Gradio server; for Electron wrappers)\n"
         "  SÖNDBÖUND.exe project <args>   (Project system: track versions + export packs)\n"
         "  SÖNDBÖUND.exe mobset <args>    (Minecraft mob soundset generator)\n"
         "  SÖNDBÖUND.exe edit <wav>       (Built-in destructive editor)\n"
@@ -184,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
             mode_name="Web UI",
             argv=rest,
         )
+
+    if cmd == "serve":
+        from .serve import main as serve_main
+
+        return int(serve_main(rest) or 0)
 
     if cmd == "desktop":
         return _run_gui_mode(

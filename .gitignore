@@ -58,3 +58,10 @@ tools/rfxgen/
 # OS
 .DS_Store
 Thumbs.db
+
+# Electron / Node
+electron/node_modules/
+electron/package-lock.json
+electron/yarn.lock
+electron/pnpm-lock.yaml
+electron/dist/
