@@ -27,6 +27,14 @@ from .ui_models import Variant, normalize_variants_state
 AudioCache = dict[str, tuple[int, np.ndarray]]
 
 
+def _pct_status(pct: int, msg: str) -> str:
+    p = max(0, min(100, int(pct)))
+    m = str(msg or "").strip()
+    if not m:
+        return f"{p}%"
+    return f"{p}% - {m}"
+
+
 def _ui_icon_data_uri() -> str | None:
     """Return a data: URI for the UI icon, if available.
 
@@ -455,6 +463,92 @@ def _run_generate_variants(
     return normalize_variants_state(out), cache
 
 
+def _iter_generate_variants(
+    engine: str,
+    prompt: str,
+    seconds: float,
+    base_seed: int,
+    variant_count: int,
+    seed_mode: str,
+    device: str,
+    model: str,
+    rfxgen_preset: str,
+    rfxgen_path: str,
+    post: bool,
+    polish: bool,
+):
+    """Yield (variants_so_far, cache_so_far, done, total)."""
+
+    eng = str(engine or "").strip()
+    pr = str(prompt or "").strip()
+    sec = float(seconds)
+    n = max(1, int(variant_count or 1))
+
+    seed_mode_s = str(seed_mode or "lock").strip().lower()
+    if seed_mode_s == "random":
+        base_seed = int.from_bytes(os.urandom(4), "big")
+    elif seed_mode_s == "step":
+        base_seed = int(base_seed) + 1
+
+    out: list[dict[str, Any]] = []
+    cache: AudioCache = {}
+    for i in range(n):
+        vid = _variant_id(i)
+        seed_i = int(base_seed) + i
+        out_wav = _cp_temp_wav_path(vid)
+
+        def _pp(audio: np.ndarray, sr: int) -> tuple[np.ndarray, str]:
+            if not (bool(post) or bool(polish)):
+                return audio, ""
+            pp = PostProcessParams(trim_silence=True, fade_ms=8)
+            pp = replace(pp, random_seed=seed_i)  # keep deterministic DSP
+            y, rep = post_process_audio(audio, sr, pp)
+            return y, f"post: trimmed={rep.trimmed}"
+
+        res = generate_wav(
+            eng,
+            prompt=pr,
+            seconds=sec,
+            seed=seed_i,
+            out_wav=out_wav,
+            candidates=1,
+            postprocess_fn=_pp,
+            device=str(device or "cpu"),
+            model=str(model or "cvssp/audioldm2"),
+            preset=str(rfxgen_preset or "blip"),
+            rfxgen_path=(Path(str(rfxgen_path)) if str(rfxgen_path or "").strip() else None),
+        )
+
+        wav_p = Path(res.wav_path)
+        a, sr = read_wav_mono(wav_p)
+        base_key = _cache_key(vid, "base")
+        cache[base_key] = (int(sr), a.astype(np.float32, copy=False))
+
+        if not _keep_control_panel_wavs():
+            _best_effort_unlink(out_wav)
+            if wav_p.resolve() != out_wav.resolve():
+                _best_effort_unlink(wav_p)
+
+        m = compute_metrics(a, int(sr))
+        out.append(
+            Variant(
+                id=vid,
+                seed=seed_i,
+                seconds=float(m.seconds),
+                rms_dbfs=_rms_dbfs(float(m.rms)),
+                locked=False,
+                select=False,
+                audio_key=base_key,
+                edited_audio_key=None,
+                wav_path=(str(wav_p) if _keep_control_panel_wavs() else ""),
+                edited_wav_path=None,
+                meta={},
+            ).to_dict()
+        )
+
+        yield normalize_variants_state(out), cache, i + 1, n
+
+
 def _ui_generate_variants(
     engine: str,
     prompt: str,
@@ -469,31 +563,44 @@ def _ui_generate_variants(
     post: bool,
     polish: bool,
 ) -> tuple[list[dict[str, Any]], AudioCache, list[list[object]], dict, str, int]:
+    # Stream progress so the UI shows explicit percentages while processing.
     try:
         bs = int(base_seed) if base_seed is not None else 1337
-        variants, cache = _run_generate_variants(
-            engine,
-            prompt,
-            float(seconds),
-            bs,
-            int(variant_count),
-            str(seed_mode),
-            str(device),
-            str(model),
-            str(rfxgen_preset),
-            str(rfxgen_path),
-            bool(post),
-            bool(polish),
-        )
-        dd = gr.update(choices=[v["id"] for v in variants], value=(variants[0]["id"] if variants else None))
+        seed_mode_s = str(seed_mode or "").strip().lower()
+        yield [], {}, [], gr.update(choices=[], value=None), _pct_status(0, "starting"), int(bs)
+
+        variants: list[dict[str, Any]] = []
+        cache: AudioCache = {}
+        for v_so_far, c_so_far, done, total in _iter_generate_variants(
+            engine=str(engine),
+            prompt=str(prompt),
+            seconds=float(seconds),
+            base_seed=bs,
+            variant_count=int(variant_count),
+            seed_mode=str(seed_mode),
+            device=str(device),
+            model=str(model),
+            rfxgen_preset=str(rfxgen_preset),
+            rfxgen_path=str(rfxgen_path),
+            post=bool(post),
+            polish=bool(polish),
+        ):
+            variants = v_so_far
+            cache = c_so_far
+            pct = int(round((done / max(1, total)) * 95.0))
+            dd = gr.update(choices=[vv["id"] for vv in variants], value=(variants[0]["id"] if variants else None))
+            yield variants, cache, _rows_from_variants(variants), dd, _pct_status(pct, f"generating {done}/{total}"), int(bs)
+
         next_seed = bs
-        if str(seed_mode or "").strip().lower() == "random":
-            next_seed = variants[0]["seed"] if variants else bs
-        elif str(seed_mode or "").strip().lower() == "step":
-            next_seed = bs + 1
-        return variants, cache, _rows_from_variants(variants), dd, f"Generated {len(variants)} variant(s).", int(next_seed)
+        if seed_mode_s == "random":
+            next_seed = int(variants[0]["seed"]) if variants else bs
+        elif seed_mode_s == "step":
+            next_seed = int(bs) + 1
+
+        dd = gr.update(choices=[vv["id"] for vv in variants], value=(variants[0]["id"] if variants else None))
+        yield variants, cache, _rows_from_variants(variants), dd, _pct_status(100, f"Generated {len(variants)} variant(s)."), int(next_seed)
     except Exception as e:
-        return [], {}, [], gr.update(choices=[], value=None), f"Generate failed: {e}", int(base_seed or 1337)
+        yield [], {}, [], gr.update(choices=[], value=None), _pct_status(100, f"Generate failed: {e}"), int(base_seed or 1337)
 
 
 def _ui_regen_unlocked(
@@ -512,7 +619,8 @@ def _ui_regen_unlocked(
     polish: bool,
 ) -> tuple[list[dict[str, Any]], AudioCache, list[list[object]], dict, str, int]:
     if not variants:
-        return [], audio_cache or {}, [], gr.update(choices=[], value=None), "No variants to regenerate.", int(base_seed or 1337)
+        yield [], audio_cache or {}, [], gr.update(choices=[], value=None), _pct_status(100, "No variants to regenerate."), int(base_seed or 1337)
+        return
 
     try:
         bs = int(base_seed) if base_seed is not None else 1337
@@ -521,6 +629,15 @@ def _ui_regen_unlocked(
             bs = int.from_bytes(os.urandom(4), "big")
         elif seed_mode_s == "step":
             bs = bs + 1
+
+        unlocked_total = sum(1 for v in (variants or []) if isinstance(v, dict) and not bool(v.get("locked", False)))
+        if unlocked_total <= 0:
+            vnorm = normalize_variants_state(variants)
+            dd0 = gr.update(choices=[v["id"] for v in vnorm], value=(vnorm[0]["id"] if vnorm else None))
+            yield vnorm, (audio_cache or {}), _rows_from_variants(vnorm), dd0, _pct_status(100, "All variants are locked."), int(bs)
+            return
+
+        yield normalize_variants_state(variants), (audio_cache or {}), _rows_from_variants(normalize_variants_state(variants)), gr.update(), _pct_status(0, "starting"), int(bs)
 
         out: list[dict[str, Any]] = []
         cache: AudioCache = dict(audio_cache or {})
@@ -579,12 +696,17 @@ def _ui_regen_unlocked(
             out.append(v2)
             regen += 1
 
+            out_norm = normalize_variants_state(out + [vv for vv in (variants[i + 1 :] or []) if isinstance(vv, dict)])
+            dd = gr.update(choices=[vv["id"] for vv in out_norm], value=(out_norm[0]["id"] if out_norm else None))
+            pct = int(round((regen / max(1, unlocked_total)) * 95.0))
+            yield out_norm, cache, _rows_from_variants(out_norm), dd, _pct_status(pct, f"regenerating {regen}/{unlocked_total}"), int(bs)
+
         dd = gr.update(choices=[v["id"] for v in out], value=(out[0]["id"] if out else None))
         out_norm = normalize_variants_state(out)
-        return out_norm, cache, _rows_from_variants(out_norm), dd, f"Regenerated {regen} unlocked variant(s).", int(bs)
+        yield out_norm, cache, _rows_from_variants(out_norm), dd, _pct_status(100, f"Regenerated {regen} unlocked variant(s)."), int(bs)
     except Exception as e:
         vnorm = normalize_variants_state(variants)
-        return vnorm, (audio_cache or {}), _rows_from_variants(vnorm), gr.update(), f"Regenerate failed: {e}", int(base_seed or 1337)
+        yield vnorm, (audio_cache or {}), _rows_from_variants(vnorm), gr.update(), _pct_status(100, f"Regenerate failed: {e}"), int(base_seed or 1337)
 
 
 def _ui_variant_audio(
@@ -742,7 +864,8 @@ def _ui_export_bundle(
         picks.append(v)
 
     if not picks:
-        return "", "No variants matched export mode."
+        yield "", _pct_status(100, "No variants matched export mode.")
+        return
 
     out_dir = Path("outputs") / "control_panel_exports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -759,7 +882,9 @@ def _ui_export_bundle(
     preset_tok = _safe_item_key(str(rfxgen_preset or "").strip()) if str(rfxgen_preset or "").strip() else ""
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for v in picks:
+        total = len(picks)
+        yield "", _pct_status(0, f"exporting {total} file(s)")
+        for idx, v in enumerate(picks):
             vid = str(v.get("id") or "variant")
             seed = v.get("seed")
 
@@ -803,7 +928,11 @@ def _ui_export_bundle(
 
             z.write(out_file, arcname=out_file.name)
 
-    return str(zip_path), f"Exported {len(picks)} variant(s) to bundle."
+            done = idx + 1
+            pct = int(round((done / max(1, total)) * 95.0))
+            yield "", _pct_status(pct, f"exporting {done}/{total}")
+
+    yield str(zip_path), _pct_status(100, f"Exported {len(picks)} variant(s) to bundle.")
 
 
 def build_demo_control_panel() -> gr.Blocks:
@@ -1138,4 +1267,9 @@ def build_demo_control_panel() -> gr.Blocks:
             outputs=[pb_preview_audio, pb_status],
         )
 
+    # Enable queueing so generator-based progress updates stream to the UI.
+    try:
+        demo.queue()
+    except Exception:
+        pass
     return demo
