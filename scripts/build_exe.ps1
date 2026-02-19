@@ -2,6 +2,7 @@ Param(
   [string]$OutDir = "dist",
   [string]$WorkDir = "build",
   [string]$Version = "",
+  [string]$PythonVersion = "3.12",
   [switch]$Clean
 )
 
@@ -13,20 +14,51 @@ if ($Clean) {
   Get-ChildItem -Path . -Filter "*.spec" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
+# Build in an isolated venv to avoid depending on whatever `python` happens to be.
+# This also lets us target a packaging-friendly Python version (3.11/3.12) because
+# some native deps (notably pythonnet for pywebview on Windows) may not have wheels
+# for the very latest Python yet.
+$venvDir = Join-Path $WorkDir ".venv-build"
+$pyLauncher = "py"
+
+function Assert-PythonVersionAvailable {
+  param(
+    [Parameter(Mandatory=$true)][string]$Ver
+  )
+
+  try {
+    & $pyLauncher "-$Ver" -c "import sys; print(sys.version)" | Out-Null
+  } catch {
+    throw "Python $Ver not found via 'py -$Ver'. Install it (e.g. winget install Python.Python.$Ver) or pass -PythonVersion <ver>."
+  }
+}
+
+Assert-PythonVersionAvailable -Ver $PythonVersion
+
+if (!(Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
+
+if (Test-Path $venvDir) { Remove-Item -Recurse -Force $venvDir }
+& $pyLauncher "-$PythonVersion" -m venv $venvDir
+
+$python = Join-Path $venvDir "Scripts\python.exe"
+if (!(Test-Path $python)) {
+  throw "Build venv python not found at $python"
+}
+
 # Install build-time tooling only (kept out of requirements.txt)
-python -m pip install --upgrade pip | Out-Null
-python -m pip install pyinstaller | Out-Null
-python -m pip install pillow | Out-Null
+& $python -m pip install --upgrade pip | Out-Null
+& $python -m pip install pyinstaller | Out-Null
+& $python -m pip install pillow | Out-Null
 
 # Ensure runtime deps are present (uses requirements.txt)
-python -m pip install -r requirements.txt | Out-Null
+& $python -m pip install -r requirements.txt | Out-Null
 
 # Ensure the local project package itself is importable for PyInstaller analysis.
-python -m pip install -e . | Out-Null
+& $python -m pip install -e . | Out-Null
 
 # Build the executable (folder-based /onedir for reliability)
 # Note: AI engines (torch/diffusers/transformers) make these builds large.
-$baseAppName = "SÖNDBÖUND"
+$baseAppName = "S$([char]0x00D6)NDB$([char]0x00D6)UND"
 $appName = $baseAppName
 if ($Version -and $Version.Trim().Length -gt 0) {
   $ver = $Version.Trim()
@@ -76,7 +108,7 @@ function Invoke-PyInstaller {
     [Parameter(Mandatory=$true)][string[]]$Args
   )
 
-  python -m PyInstaller @Args
+  & $python -m PyInstaller @Args
   if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE"
   }
