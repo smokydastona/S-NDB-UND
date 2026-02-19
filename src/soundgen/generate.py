@@ -208,7 +208,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--replicate-input-json",
         default=None,
-        help="Extra JSON object merged into Replicate input (model-specific).",
+        help=(
+            "Extra JSON object merged into Replicate input (model-specific). "
+            "If you include Windows paths, escape backslashes (e.g. \\\\) or use forward slashes."
+        ),
     )
 
     # Minecraft resource pack export

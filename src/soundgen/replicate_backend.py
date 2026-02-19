@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 import requests
 
+from .json_utils import JsonParseError, loads_json_object_lenient
+
 
 @dataclass(frozen=True)
 class ReplicateParams:
@@ -69,9 +71,10 @@ def generate_with_replicate(params: ReplicateParams) -> Path:
     }
 
     if params.extra_input_json:
-        extra = json.loads(params.extra_input_json)
-        if not isinstance(extra, dict):
-            raise ValueError("--replicate-input-json must parse to a JSON object")
+        try:
+            extra = loads_json_object_lenient(str(params.extra_input_json), context="--replicate-input-json")
+        except JsonParseError as e:
+            raise ValueError(str(e)) from e
         input_obj.update(extra)
 
     body = {"model": model, "input": input_obj}

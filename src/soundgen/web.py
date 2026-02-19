@@ -288,13 +288,12 @@ def _ui_fx_chain_load(chain_file: object) -> tuple[str, str]:
 
 def _ui_fx_chain_save(chain_json: str, out_path: str) -> str:
     from .fx_chain_v2 import FxChainV2, FxStepV2, dump_fx_chain_v2_json
+    from .json_utils import JsonParseError, loads_json_object_lenient
 
     try:
-        obj = json.loads(str(chain_json or "{}"))
-        if not isinstance(obj, dict):
-            return "Chain JSON must be an object."
-    except Exception as e:
-        return f"Invalid JSON: {e}"
+        obj = loads_json_object_lenient(str(chain_json or "{}"), context="FX chain JSON")
+    except JsonParseError as e:
+        return str(e)
 
     steps_obj = obj.get("steps")
     if not isinstance(steps_obj, list):
@@ -322,6 +321,7 @@ def _ui_fx_chain_save(chain_json: str, out_path: str) -> str:
 
 def _ui_fx_chain_apply(chain_json: str, wav_file: object) -> tuple[tuple[int, np.ndarray] | None, str]:
     from .fx_chain_v2 import FxChainV2, FxStepV2, apply_fx_chain_v2
+    from .json_utils import JsonParseError, loads_json_object_lenient
 
     p = _as_existing_path(wav_file)
     if p is None:
@@ -330,11 +330,9 @@ def _ui_fx_chain_apply(chain_json: str, wav_file: object) -> tuple[tuple[int, np
         return None, "Audition currently requires a .wav input."
 
     try:
-        obj = json.loads(str(chain_json or "{}"))
-        if not isinstance(obj, dict):
-            return None, "Chain JSON must be an object."
-    except Exception as e:
-        return None, f"Invalid chain JSON: {e}"
+        obj = loads_json_object_lenient(str(chain_json or "{}"), context="FX chain JSON")
+    except JsonParseError as e:
+        return None, str(e)
 
     steps_obj = obj.get("steps")
     if not isinstance(steps_obj, list):
