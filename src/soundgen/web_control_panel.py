@@ -783,6 +783,302 @@ def _ui_regen_unlocked(
         yield vnorm, (audio_cache or {}), _rows_from_variants(vnorm), gr.update(), _pct_status(100, f"Regenerate failed: {e}"), int(base_seed or 1337)
 
 
+def _ui_mode_visibility(mode_label: str) -> tuple[dict, dict, dict, dict]:
+    """Compute visibility updates for major UI sections.
+
+    Returns updates for: advanced controls, pro-only tabs (projects/copilot), and edit tools.
+    """
+
+    m = str(mode_label or "Basic").strip().lower()
+    is_basic = m.startswith("basic")
+    is_advanced = m.startswith("advanced")
+    is_pro = m.startswith("pro")
+
+    show_advanced = bool(is_advanced or is_pro)
+    show_edit = bool(is_advanced or is_pro)
+    show_projects = bool(is_pro)
+    show_copilot = bool(is_pro)
+
+    return (
+        gr.update(visible=show_advanced),
+        gr.update(visible=show_edit),
+        gr.update(visible=show_projects),
+        gr.update(visible=show_copilot),
+    )
+
+
+def _ui_mode_defaults(mode_label: str):
+    m = str(mode_label or "Basic").strip().lower()
+    if m.startswith("basic"):
+        return (
+            gr.update(value=1),  # variant_count
+            gr.update(value="random"),  # seed_mode
+        )
+    # Advanced/Pro
+    return (
+        gr.update(value=6),
+        gr.update(value="lock"),
+    )
+
+
+def _ui_hint_text(engine: str, variant_count: int, post: bool, polish: bool) -> str:
+    e = str(engine or "").strip().lower()
+    bs = int(variant_count) if variant_count is not None else 1
+    parts: list[str] = []
+
+    if e in {"diffusers", "replicate"}:
+        parts.append("AI engine: slower, higher quality")
+    elif e in {"rfxgen", "layered"}:
+        parts.append("Procedural engine: fast, snappy transients")
+    else:
+        parts.append(f"Engine: {engine}")
+
+    if bs > 1:
+        parts.append(f"Batch enabled: {bs} variants will be generated")
+
+    if bool(polish):
+        parts.append("Polish mode: extra cleanup + finishing")
+    elif bool(post):
+        parts.append("Post-process: trims + small fades")
+
+    return " • ".join(parts)
+
+
+_WORKFLOW_PRESETS: dict[str, dict[str, object]] = {
+    "(none)": {},
+    "Creature SFX": {"engine": "diffusers", "seconds": 2.0, "variant_count": 6, "post": True, "polish": True},
+    "UI/Tech Sounds": {"engine": "rfxgen", "seconds": 0.4, "variant_count": 8, "post": True, "polish": False},
+    "Foley": {"engine": "layered", "seconds": 2.5, "variant_count": 6, "post": True, "polish": True},
+}
+
+
+def _ui_apply_workflow_preset(preset_label: str):
+    p = _WORKFLOW_PRESETS.get(str(preset_label or "(none)"), {})
+    if not p:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+    return (
+        gr.update(value=p.get("engine")),
+        gr.update(value=p.get("seconds")),
+        gr.update(value=p.get("variant_count")),
+        gr.update(value=p.get("post")),
+        gr.update(value=p.get("polish")),
+    )
+
+
+def _ui_smart_defaults(engine: str, enabled: bool):
+    if not bool(enabled):
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    e = str(engine or "").strip().lower()
+    if e == "rfxgen":
+        return gr.update(value=0.4), gr.update(value=8), gr.update(value=True), gr.update(value=False)
+    if e == "diffusers":
+        return gr.update(value=2.0), gr.update(value=6), gr.update(value=True), gr.update(value=True)
+    if e == "layered":
+        return gr.update(value=2.5), gr.update(value=6), gr.update(value=True), gr.update(value=True)
+    return gr.update(), gr.update(), gr.update(), gr.update()
+
+
+def _history_append(
+    history: list[dict[str, Any]] | None,
+    *,
+    engine: str,
+    prompt: str,
+    seconds: float,
+    variant_count: int,
+    post: bool,
+    polish: bool,
+    seed: int,
+) -> list[dict[str, Any]]:
+    h = list(history or [])
+    h.append(
+        {
+            "engine": str(engine),
+            "prompt": str(prompt),
+            "seconds": float(seconds),
+            "variants": int(variant_count),
+            "post": bool(post),
+            "polish": bool(polish),
+            "seed": int(seed),
+        }
+    )
+    return h[-10:]
+
+
+def _history_rows(history: list[dict[str, Any]] | None) -> list[list[object]]:
+    rows: list[list[object]] = []
+    for i, it in enumerate(list(history or [])[::-1], start=1):
+        if not isinstance(it, dict):
+            continue
+        rows.append(
+            [
+                i,
+                it.get("engine"),
+                it.get("prompt"),
+                it.get("seconds"),
+                it.get("variants"),
+                it.get("seed"),
+            ]
+        )
+    return rows
+
+
+def _history_choices(history: list[dict[str, Any]] | None) -> list[str]:
+    out: list[str] = []
+    for idx, it in enumerate(list(history or [])[::-1]):
+        if not isinstance(it, dict):
+            continue
+        prompt = str(it.get("prompt") or "").strip()
+        engine = str(it.get("engine") or "").strip()
+        out.append(f"{idx + 1}. {engine} — {prompt[:60]}")
+    return out
+
+
+def _history_get(history: list[dict[str, Any]] | None, choice_label: str) -> dict[str, Any] | None:
+    labels = _history_choices(history)
+    try:
+        pos = labels.index(str(choice_label))
+    except ValueError:
+        return None
+    items = list(history or [])[::-1]
+    if pos < 0 or pos >= len(items):
+        return None
+    return items[pos] if isinstance(items[pos], dict) else None
+
+
+def _ui_history_apply(history: list[dict[str, Any]] | None, choice_label: str):
+    it = _history_get(history, choice_label)
+    if not it:
+        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), "Pick a history entry first."
+    return (
+        gr.update(value=it.get("engine")),
+        gr.update(value=it.get("prompt")),
+        gr.update(value=it.get("seconds")),
+        gr.update(value=it.get("variants")),
+        gr.update(value=it.get("seed")),
+        "Applied history entry.",
+    )
+
+
+def _ui_generate_variants_with_history(
+    engine: str,
+    prompt: str,
+    seconds: float,
+    base_seed: int | None,
+    seed_mode: str,
+    variant_count: int,
+    device: str,
+    model: str,
+    rfxgen_preset: str,
+    rfxgen_path: str,
+    post: bool,
+    polish: bool,
+    history: list[dict[str, Any]] | None,
+):
+    h = list(history or [])
+    for variants, cache, rows, dd, status, next_seed in _ui_generate_variants(
+        engine,
+        prompt,
+        seconds,
+        base_seed,
+        seed_mode,
+        variant_count,
+        device,
+        model,
+        rfxgen_preset,
+        rfxgen_path,
+        post,
+        polish,
+    ):
+        h_out = h
+        if isinstance(status, str) and status.startswith("100%") and "Generated" in status:
+            h_out = _history_append(
+                h,
+                engine=str(engine),
+                prompt=str(prompt),
+                seconds=float(seconds),
+                variant_count=int(variant_count),
+                post=bool(post),
+                polish=bool(polish),
+                seed=int(base_seed or 1337),
+            )
+            h = h_out
+        yield (
+            variants,
+            cache,
+            rows,
+            dd,
+            status,
+            next_seed,
+            h,
+            _history_rows(h),
+            gr.update(choices=_history_choices(h), value=(_history_choices(h)[0] if _history_choices(h) else None)),
+        )
+
+
+def _ui_regen_unlocked_with_history(
+    variants: list[dict[str, Any]],
+    audio_cache: AudioCache,
+    engine: str,
+    prompt: str,
+    seconds: float,
+    base_seed: int | None,
+    seed_mode: str,
+    device: str,
+    model: str,
+    rfxgen_preset: str,
+    rfxgen_path: str,
+    post: bool,
+    polish: bool,
+    history: list[dict[str, Any]] | None,
+):
+    h = list(history or [])
+    for v2, cache2, rows2, dd2, status2, next_seed2 in _ui_regen_unlocked(
+        variants,
+        audio_cache,
+        engine,
+        prompt,
+        seconds,
+        base_seed,
+        seed_mode,
+        device,
+        model,
+        rfxgen_preset,
+        rfxgen_path,
+        post,
+        polish,
+    ):
+        h_out = h
+        if isinstance(status2, str) and status2.startswith("100%") and "Regenerated" in status2:
+            h_out = _history_append(
+                h,
+                engine=str(engine),
+                prompt=str(prompt),
+                seconds=float(seconds),
+                variant_count=int(len(v2 or [])),
+                post=bool(post),
+                polish=bool(polish),
+                seed=int(base_seed or 1337),
+            )
+            h = h_out
+        yield (
+            v2,
+            cache2,
+            rows2,
+            dd2,
+            status2,
+            next_seed2,
+            h,
+            _history_rows(h),
+            gr.update(choices=_history_choices(h), value=(_history_choices(h)[0] if _history_choices(h) else None)),
+        )
+
+
 def _ui_variant_audio(
     variants: list[dict[str, Any]],
     audio_cache: AudioCache,
@@ -1050,7 +1346,25 @@ def build_demo_control_panel() -> gr.Blocks:
     {watermark_css}
     """
 
-    with gr.Blocks(title="SÖNDBÖUND", css=css) as demo:
+    js = r"""
+() => {
+  // Keyboard shortcuts (best-effort): Ctrl+Enter generates.
+  document.addEventListener('keydown', (e) => {
+    try {
+      const isCtrlEnter = (e.ctrlKey || e.metaKey) && (e.key === 'Enter');
+      if (isCtrlEnter) {
+        const btn = document.querySelector('#sndb_gen_btn');
+        if (btn) {
+          btn.click();
+          e.preventDefault();
+        }
+      }
+    } catch (_) {}
+  }, { capture: true });
+}
+"""
+
+    with gr.Blocks(title="SÖNDBÖUND", css=css, js=js) as demo:
         gr.Markdown(
             "# SÖNDBÖUND — Control Panel UI (Gradio-native)\n"
             "Discrete actions, explicit state, zero continuous interaction."
@@ -1058,176 +1372,201 @@ def build_demo_control_panel() -> gr.Blocks:
 
         variants_state = gr.State([])
         audio_cache_state = gr.State({})
+        history_state = gr.State([])
 
         with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("## Project Browser")
-                pr_root = gr.Textbox(value=".", label="Project root")
-                pr_load_btn = gr.Button("Load project")
-                pr_json = gr.JSON(label="Project")
-                pr_item_id = gr.Dropdown(choices=[], value=None, label="Item id")
-                pr_new_id = gr.Textbox(value="", label="New id (rename/duplicate)")
-                pr_confirm_delete = gr.Checkbox(value=False, label="Confirm delete")
-                with gr.Row():
-                    pr_rename_btn = gr.Button("Rename")
-                    pr_dup_btn = gr.Button("Duplicate")
-                    pr_del_btn = gr.Button("Delete")
-                with gr.Row():
-                    pr_build_btn = gr.Button("Build")
-                    pr_edit_btn = gr.Button("Edit")
-                pr_items = gr.Dataframe(
-                    headers=["id", "category", "engine", "event", "sound_path", "variants", "active_version"],
-                    datatype=["str", "str", "str", "str", "str", "number", "number"],
-                    row_count=(0, "dynamic"),
-                    col_count=(7, "fixed"),
-                    interactive=False,
-                    label="Items",
-                )
-                pr_status = gr.Textbox(label="Status", interactive=False)
-                pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items, pr_item_id, pr_status])
-                pr_rename_btn.click(
-                    fn=_ui_project_rename,
-                    inputs=[pr_root, pr_item_id, pr_new_id],
-                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
-                )
-                pr_dup_btn.click(
-                    fn=_ui_project_duplicate,
-                    inputs=[pr_root, pr_item_id, pr_new_id],
-                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
-                )
-                pr_del_btn.click(
-                    fn=_ui_project_delete,
-                    inputs=[pr_root, pr_item_id, pr_confirm_delete],
-                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
-                )
-                pr_build_btn.click(
-                    fn=_ui_project_build_and_reload,
-                    inputs=[pr_root, pr_item_id],
-                    outputs=[pr_json, pr_items, pr_item_id, pr_status],
-                )
-                pr_edit_btn.click(
-                    fn=_ui_project_edit,
-                    inputs=[pr_root, pr_item_id],
-                    outputs=[pr_status],
-                )
+            ui_mode = gr.Radio(
+                ["Basic", "Advanced", "Pro"],
+                value="Basic",
+                label="Mode",
+                info="Basic reduces cognitive load; Advanced reveals editing/export; Pro reveals projects + Copilot.",
+            )
+            workflow_preset = gr.Dropdown(
+                list(_WORKFLOW_PRESETS.keys()),
+                value="(none)",
+                label="Workflow preset",
+                info="Quickly applies recommended settings for common workflows.",
+            )
 
-            with gr.Column(scale=1):
-                gr.Markdown("## Preset Browser")
-                pb_search = gr.Textbox(value="", label="Search")
-                pb_keys = gr.Radio(choices=list(SUPPORTED_PRESETS), value="blip", label="rfxgen presets")
-                with gr.Row():
-                    pb_preview_btn = gr.Button("Preview")
-                    pb_load_btn = gr.Button("Load into generator")
-                pb_preview_audio = gr.Audio(label="Preview", type="numpy")
-                pb_status = gr.Textbox(label="Status", interactive=False)
+        hint_md = gr.Markdown("")
 
-                def _pb_update(q: str):
-                    query = str(q or "").strip().lower()
-                    keys = list(SUPPORTED_PRESETS)
-                    if query:
-                        keys = [k for k in keys if query in str(k).lower()]
-                    return gr.update(choices=keys[:250], value=(keys[0] if keys else None))
+        # Sections are organized into tabs so the UI feels lighter.
+        with gr.Tabs():
+            with gr.Tab("Generate"):
+                gr.Markdown("## Generate")
+                with gr.Accordion("Generation", open=True):
+                    engine = gr.Dropdown(
+                        available_engines(),
+                        value="diffusers",
+                        label="Engine",
+                        info="Choose how audio is generated (AI vs procedural).",
+                    )
+                    prompt = gr.Textbox(label="Prompt", placeholder="e.g. coin pickup")
+                    seconds = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Seconds")
+                    with gr.Row():
+                        generate_btn = gr.Button("Generate", elem_id="sndb_gen_btn")
+                        regen_btn = gr.Button("Regenerate unlocked")
+                    gen_status = gr.Textbox(label="Status", interactive=False)
 
-                pb_search.change(fn=_pb_update, inputs=[pb_search], outputs=[pb_keys])
+                advanced_box = gr.Group(visible=False)
+                with advanced_box:
+                    with gr.Accordion("Advanced", open=False):
+                        with gr.Row():
+                            seed = gr.Number(value=1337, precision=0, label="Base seed", info="Lock for repeatable results.")
+                            seed_mode = gr.Dropdown(
+                                ["lock", "random", "step"],
+                                value="lock",
+                                label="Seed mode",
+                                info="lock=reproducible, random=new seed per run, step=increment seed.",
+                            )
+                        variant_count = gr.Slider(1, 16, value=6, step=1, label="Variant count")
+                        randomness = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="Randomness (reserved)")
+                        with gr.Row():
+                            post = gr.Checkbox(value=True, label="Post-process", info="Trims silence + applies small fades.")
+                            polish = gr.Checkbox(value=False, label="Polish mode", info="Extra finishing; typically slower.")
+                        smart_defaults = gr.Checkbox(value=True, label="Smart defaults", info="Auto-fill recommended values per engine.")
 
-        with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("## Generator Controls")
-                engine = gr.Dropdown(available_engines(), value="diffusers", label="Engine")
-                prompt = gr.Textbox(label="Prompt", placeholder="e.g. coin pickup")
-                seconds = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Seconds")
-                with gr.Row():
-                    seed = gr.Number(value=1337, precision=0, label="Base seed")
-                    seed_mode = gr.Dropdown(["lock", "random", "step"], value="lock", label="Seed mode")
-                variant_count = gr.Slider(1, 16, value=6, step=1, label="Variant count")
-                randomness = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="Randomness (reserved)")
-                with gr.Row():
-                    post = gr.Checkbox(value=True, label="Post-process")
-                    polish = gr.Checkbox(value=False, label="Polish mode")
+                with gr.Accordion("Results", open=True):
+                    variants_df = gr.Dataframe(
+                        headers=["select", "id", "seconds", "rms_dbfs", "seed", "locked"],
+                        datatype=["bool", "str", "number", "str", "number", "bool"],
+                        row_count=(0, "dynamic"),
+                        col_count=(6, "fixed"),
+                        interactive=True,
+                        label="Variants",
+                    )
+                    current_variant = gr.Dropdown([], value=None, label="Current variant")
+                    load_btn = gr.Button("Load preview")
 
+                with gr.Accordion("History", open=False):
+                    history_df = gr.Dataframe(
+                        headers=["#", "engine", "prompt", "seconds", "variants", "seed"],
+                        datatype=["number", "str", "str", "number", "number", "number"],
+                        row_count=(0, "dynamic"),
+                        col_count=(6, "fixed"),
+                        interactive=False,
+                        label="Last 10 runs",
+                    )
+                    history_pick = gr.Dropdown(choices=[], value=None, label="Pick")
+                    history_apply_btn = gr.Button("Apply to controls")
+                    history_status = gr.Textbox(label="Status", interactive=False)
+
+                with gr.Accordion("Export", open=False):
+                    with gr.Row():
+                        ex_fmt = gr.Dropdown(["wav", "mp3", "ogg", "flac"], value="wav", label="Format")
+                        ex_sr = gr.Number(value=None, precision=0, label="Sample rate (optional)")
+                    with gr.Row():
+                        ex_wav_subtype = gr.Dropdown(["PCM_16", "PCM_24", "FLOAT"], value="PCM_16", label="WAV subtype")
+                        ex_mp3_bitrate = gr.Textbox(value="192k", label="MP3 bitrate")
+                        ex_ogg_quality = gr.Slider(0, 10, value=5, step=1, label="OGG quality")
+                    ex_mode = gr.Dropdown(["selected", "locked"], value="selected", label="Export mode")
+                    filename_template = gr.Textbox(value="{variant}_{seed}", label="Filename template")
+                    export_btn = gr.Button("Export bundle (.zip)")
+                    export_out = gr.File(label="Export bundle")
+                    export_status = gr.Textbox(label="Status", interactive=False)
+
+            edit_tab = gr.Tab("Edit", visible=False)
+            with edit_tab:
+                gr.Markdown("## Edit")
                 with gr.Row():
-                    device = gr.Dropdown(["cpu", "cuda"], value="cpu", label="Device")
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Waveform Viewer")
+                        viewer_audio = gr.Audio(label="Playback", type="numpy")
+                        with gr.Row():
+                            viewer_wave = gr.Image(label="Waveform", type="pil")
+                            viewer_spec = gr.Image(label="Spectrogram", type="pil")
+                        with gr.Row():
+                            start_s = gr.Number(value=0.0, precision=3, label="Start (s)")
+                            end_s = gr.Number(value=0.0, precision=3, label="End (s, 0=full)")
+                        with gr.Row():
+                            fade_in_ms = gr.Slider(0, 250, value=0, step=5, label="Fade in (ms)")
+                            fade_out_ms = gr.Slider(0, 250, value=0, step=5, label="Fade out (ms)")
+                        apply_edits_btn = gr.Button("Apply edits (non-destructive)")
+                        viewer_status = gr.Textbox(label="Status", interactive=False)
+
+                    with gr.Column(scale=1):
+                        gr.Markdown("### FX Chain Controls (slot-based)")
+                        fx_slots = gr.Dataframe(
+                            headers=["slot", "fx_type", "enabled", "params_json"],
+                            datatype=["number", "str", "bool", "str"],
+                            row_count=(6, "fixed"),
+                            col_count=(4, "fixed"),
+                            interactive=True,
+                            value=[[i + 1, "", True, "{}"] for i in range(6)],
+                            label="FX slots",
+                        )
+                        fx_apply_btn = gr.Button("Apply FX to current (audition)")
+                        fx_audio_out = gr.Audio(label="FX result", type="numpy")
+                        fx_status = gr.Textbox(label="Status", interactive=False)
+
+                with gr.Accordion("Analysis", open=True):
+                    with gr.Tabs():
+                        with gr.Tab("Spectrum"):
+                            analysis_spec = gr.Image(label="Spectrogram", type="pil")
+                        with gr.Tab("Loudness"):
+                            analysis_txt = gr.Textbox(label="RMS dBFS / Peak", interactive=False)
+
+            projects_tab = gr.Tab("Projects", visible=False)
+            with projects_tab:
+                gr.Markdown("## Projects")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Project Browser")
+                        pr_root = gr.Textbox(value=".", label="Project root")
+                        pr_load_btn = gr.Button("Load project")
+                        pr_json = gr.JSON(label="Project")
+                        pr_item_id = gr.Dropdown(choices=[], value=None, label="Item id")
+                        pr_new_id = gr.Textbox(value="", label="New id (rename/duplicate)")
+                        pr_confirm_delete = gr.Checkbox(value=False, label="Confirm delete")
+                        with gr.Row():
+                            pr_rename_btn = gr.Button("Rename")
+                            pr_dup_btn = gr.Button("Duplicate")
+                            pr_del_btn = gr.Button("Delete")
+                        with gr.Row():
+                            pr_build_btn = gr.Button("Build")
+                            pr_edit_btn = gr.Button("Edit")
+                        pr_items = gr.Dataframe(
+                            headers=["id", "category", "engine", "event", "sound_path", "variants", "active_version"],
+                            datatype=["str", "str", "str", "str", "str", "number", "number"],
+                            row_count=(0, "dynamic"),
+                            col_count=(7, "fixed"),
+                            interactive=False,
+                            label="Items",
+                        )
+                        pr_status = gr.Textbox(label="Status", interactive=False)
+
+                    with gr.Column(scale=1):
+                        gr.Markdown("### Preset Browser")
+                        pb_search = gr.Textbox(value="", label="Search")
+                        pb_keys = gr.Radio(choices=list(SUPPORTED_PRESETS), value="blip", label="rfxgen presets")
+                        with gr.Row():
+                            pb_preview_btn = gr.Button("Preview")
+                            pb_load_btn = gr.Button("Load into generator")
+                        pb_preview_audio = gr.Audio(label="Preview", type="numpy")
+                        pb_status = gr.Textbox(label="Status", interactive=False)
+
+                        def _pb_update(q: str):
+                            query = str(q or "").strip().lower()
+                            keys = list(SUPPORTED_PRESETS)
+                            if query:
+                                keys = [k for k in keys if query in str(k).lower()]
+                            return gr.update(choices=keys[:250], value=(keys[0] if keys else None))
+
+                        pb_search.change(fn=_pb_update, inputs=[pb_search], outputs=[pb_keys])
+
+            settings_tab = gr.Tab("Settings")
+            with settings_tab:
+                gr.Markdown("## Settings")
+                gr.Markdown("These settings affect generation behavior.")
+                with gr.Row():
+                    device = gr.Dropdown(["cpu", "cuda"], value="cpu", label="Device", info="cpu is safest; cuda requires a compatible GPU/driver.")
                     model = gr.Dropdown(["cvssp/audioldm2"], value="cvssp/audioldm2", label="Model")
-
                 with gr.Row():
                     rfxgen_preset = gr.Dropdown(list(SUPPORTED_PRESETS), value="blip", label="rfxgen preset")
                     rfxgen_path = gr.Textbox(value="", label="rfxgen path (optional)")
 
-                with gr.Row():
-                    generate_btn = gr.Button("Generate variants")
-                    regen_btn = gr.Button("Regenerate unlocked")
-                gen_status = gr.Textbox(label="Status", interactive=False)
-
-            with gr.Column(scale=1):
-                gr.Markdown("## Variant Table")
-                variants_df = gr.Dataframe(
-                    headers=["select", "id", "seconds", "rms_dbfs", "seed", "locked"],
-                    datatype=["bool", "str", "number", "str", "number", "bool"],
-                    row_count=(0, "dynamic"),
-                    col_count=(6, "fixed"),
-                    interactive=True,
-                    label="Variants",
-                )
-                current_variant = gr.Dropdown([], value=None, label="Current variant")
-                load_btn = gr.Button("Load into viewer")
-
-        with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("## Waveform Viewer")
-                viewer_audio = gr.Audio(label="Playback", type="numpy")
-                with gr.Row():
-                    viewer_wave = gr.Image(label="Waveform", type="pil")
-                    viewer_spec = gr.Image(label="Spectrogram", type="pil")
-                with gr.Row():
-                    start_s = gr.Number(value=0.0, precision=3, label="Start (s)")
-                    end_s = gr.Number(value=0.0, precision=3, label="End (s, 0=full)")
-                with gr.Row():
-                    fade_in_ms = gr.Slider(0, 250, value=0, step=5, label="Fade in (ms)")
-                    fade_out_ms = gr.Slider(0, 250, value=0, step=5, label="Fade out (ms)")
-                apply_edits_btn = gr.Button("Apply edits (non-destructive)")
-                viewer_status = gr.Textbox(label="Status", interactive=False)
-
-            with gr.Column(scale=1):
-                gr.Markdown("## FX Chain Controls (slot-based)")
-                fx_slots = gr.Dataframe(
-                    headers=["slot", "fx_type", "enabled", "params_json"],
-                    datatype=["number", "str", "bool", "str"],
-                    row_count=(6, "fixed"),
-                    col_count=(4, "fixed"),
-                    interactive=True,
-                    value=[[i + 1, "", True, "{}"] for i in range(6)],
-                    label="FX slots",
-                )
-                fx_apply_btn = gr.Button("Apply FX to current (audition)")
-                fx_audio_out = gr.Audio(label="FX result", type="numpy")
-                fx_status = gr.Textbox(label="Status", interactive=False)
-
-        with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("## Export Settings")
-                with gr.Row():
-                    ex_fmt = gr.Dropdown(["wav", "mp3", "ogg", "flac"], value="wav", label="Format")
-                    ex_sr = gr.Number(value=None, precision=0, label="Sample rate (optional)")
-                with gr.Row():
-                    ex_wav_subtype = gr.Dropdown(["PCM_16", "PCM_24", "FLOAT"], value="PCM_16", label="WAV subtype")
-                    ex_mp3_bitrate = gr.Textbox(value="192k", label="MP3 bitrate")
-                    ex_ogg_quality = gr.Slider(0, 10, value=5, step=1, label="OGG quality")
-                ex_mode = gr.Dropdown(["selected", "locked"], value="selected", label="Export mode")
-                filename_template = gr.Textbox(value="{variant}_{seed}", label="Filename template")
-
-            with gr.Column(scale=1):
-                gr.Markdown("## Export + Analysis")
-                export_btn = gr.Button("Export bundle (.zip)")
-                export_out = gr.File(label="Export bundle")
-                export_status = gr.Textbox(label="Status", interactive=False)
-                with gr.Tabs():
-                    with gr.Tab("Spectrum"):
-                        analysis_spec = gr.Image(label="Spectrogram", type="pil")
-                    with gr.Tab("Loudness"):
-                        analysis_txt = gr.Textbox(label="RMS dBFS / Peak", interactive=False)
-
-        with gr.Row():
-            with gr.Column(scale=1):
+            copilot_tab = gr.Tab("Copilot", visible=False)
+            with copilot_tab:
                 gr.Markdown("## Copilot (optional)")
                 gr.Markdown(
                     "Local-first helper for prompt writing, naming, manifests, subtitles, and error explanations. "
@@ -1256,8 +1595,38 @@ def build_demo_control_panel() -> gr.Blocks:
                     ai_clear_btn = gr.Button("Clear")
                 ai_status = gr.Textbox(label="Status", interactive=False)
 
+        # Mode + preset wiring
+        ui_mode.change(
+            fn=_ui_mode_visibility,
+            inputs=[ui_mode],
+            outputs=[advanced_box, edit_tab, projects_tab, copilot_tab],
+        )
+        ui_mode.change(
+            fn=_ui_mode_defaults,
+            inputs=[ui_mode],
+            outputs=[variant_count, seed_mode],
+        )
+
+        workflow_preset.change(
+            fn=_ui_apply_workflow_preset,
+            inputs=[workflow_preset],
+            outputs=[engine, seconds, variant_count, post, polish],
+        )
+
+        engine.change(
+            fn=_ui_smart_defaults,
+            inputs=[engine, smart_defaults],
+            outputs=[seconds, variant_count, post, polish],
+        )
+
+        # Live hint text
+        engine.change(fn=_ui_hint_text, inputs=[engine, variant_count, post, polish], outputs=[hint_md])
+        variant_count.change(fn=_ui_hint_text, inputs=[engine, variant_count, post, polish], outputs=[hint_md])
+        post.change(fn=_ui_hint_text, inputs=[engine, variant_count, post, polish], outputs=[hint_md])
+        polish.change(fn=_ui_hint_text, inputs=[engine, variant_count, post, polish], outputs=[hint_md])
+
         generate_btn.click(
-            fn=_ui_generate_variants,
+            fn=_ui_generate_variants_with_history,
             inputs=[
                 engine,
                 prompt,
@@ -1271,12 +1640,23 @@ def build_demo_control_panel() -> gr.Blocks:
                 rfxgen_path,
                 post,
                 polish,
+                history_state,
             ],
-            outputs=[variants_state, audio_cache_state, variants_df, current_variant, gen_status, seed],
+            outputs=[
+                variants_state,
+                audio_cache_state,
+                variants_df,
+                current_variant,
+                gen_status,
+                seed,
+                history_state,
+                history_df,
+                history_pick,
+            ],
         )
 
         regen_btn.click(
-            fn=_ui_regen_unlocked,
+            fn=_ui_regen_unlocked_with_history,
             inputs=[
                 variants_state,
                 audio_cache_state,
@@ -1291,8 +1671,19 @@ def build_demo_control_panel() -> gr.Blocks:
                 rfxgen_path,
                 post,
                 polish,
+                history_state,
             ],
-            outputs=[variants_state, audio_cache_state, variants_df, current_variant, gen_status, seed],
+            outputs=[
+                variants_state,
+                audio_cache_state,
+                variants_df,
+                current_variant,
+                gen_status,
+                seed,
+                history_state,
+                history_df,
+                history_pick,
+            ],
         )
 
         variants_df.change(fn=_variants_from_df, inputs=[variants_df, variants_state], outputs=[variants_state])
@@ -1336,6 +1727,40 @@ def build_demo_control_panel() -> gr.Blocks:
                 rfxgen_preset,
             ],
             outputs=[export_out, export_status],
+        )
+
+        history_apply_btn.click(
+            fn=_ui_history_apply,
+            inputs=[history_state, history_pick],
+            outputs=[engine, prompt, seconds, variant_count, seed, history_status],
+        )
+
+        # Projects wiring (pro mode)
+        pr_load_btn.click(fn=_ui_project_load, inputs=[pr_root], outputs=[pr_json, pr_items, pr_item_id, pr_status])
+        pr_rename_btn.click(
+            fn=_ui_project_rename,
+            inputs=[pr_root, pr_item_id, pr_new_id],
+            outputs=[pr_json, pr_items, pr_item_id, pr_status],
+        )
+        pr_dup_btn.click(
+            fn=_ui_project_duplicate,
+            inputs=[pr_root, pr_item_id, pr_new_id],
+            outputs=[pr_json, pr_items, pr_item_id, pr_status],
+        )
+        pr_del_btn.click(
+            fn=_ui_project_delete,
+            inputs=[pr_root, pr_item_id, pr_confirm_delete],
+            outputs=[pr_json, pr_items, pr_item_id, pr_status],
+        )
+        pr_build_btn.click(
+            fn=_ui_project_build_and_reload,
+            inputs=[pr_root, pr_item_id],
+            outputs=[pr_json, pr_items, pr_item_id, pr_status],
+        )
+        pr_edit_btn.click(
+            fn=_ui_project_edit,
+            inputs=[pr_root, pr_item_id],
+            outputs=[pr_status],
         )
 
         def _ai_defaults(provider_label: str):
