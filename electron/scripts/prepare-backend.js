@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 function exists(p) {
   try {
@@ -15,12 +16,45 @@ function rmrf(p) {
   fs.rmSync(p, { recursive: true, force: true });
 }
 
+function robocopyMirror(src, dst) {
+  // robocopy exit codes: 0-7 are success (with different semantics), 8+ are failures.
+  fs.mkdirSync(dst, { recursive: true });
+  const args = [
+    src,
+    dst,
+    '/MIR',
+    '/R:2',
+    '/W:1',
+    '/NP',
+    '/NFL',
+    '/NDL'
+  ];
+
+  const res = spawnSync('robocopy', args, { stdio: 'inherit', windowsHide: true });
+  const code = typeof res.status === 'number' ? res.status : 1;
+  if (code >= 8) {
+    throw new Error(`robocopy failed with exit code ${code}`);
+  }
+}
+
 function copyDir(src, dst) {
+  if (process.platform === 'win32') {
+    // On some Windows setups (and/or newer Node versions), recursive JS copies can
+    // crash the process when handling very large directory trees. Use robocopy.
+    robocopyMirror(src, dst);
+    return;
+  }
+
   fs.mkdirSync(dst, { recursive: true });
   // Node 16+ supports fs.cpSync
   if (typeof fs.cpSync === 'function') {
-    fs.cpSync(src, dst, { recursive: true });
-    return;
+    try {
+      fs.cpSync(src, dst, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      console.warn(`[prepare-backend] Warning: fs.cpSync failed (${msg}). Falling back to manual copy.`);
+    }
   }
   // Fallback: manual walk
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -62,7 +96,9 @@ function main() {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const distDir = path.join(repoRoot, 'dist');
 
-  // Destination folder name (stable) used by Electron runtime.
+  // Name of the PyInstaller onedir folder (and EXE base name) under dist/.
+  // Note: we intentionally copy the onedir *contents* directly into electron/backend/
+  // to avoid an extra nesting level that can aggravate Windows path length issues.
   const backendFolderName = process.env.SOUNDGEN_BACKEND_FOLDER || 'SÖNDBÖUND';
 
   // Source folder may be versioned (e.g. SÖNDBÖUND-123). Pick the newest match.
@@ -73,7 +109,6 @@ function main() {
 
   const electronDir = path.join(repoRoot, 'electron');
   const dstBackendRoot = path.join(electronDir, 'backend');
-  const dstBackend = path.join(dstBackendRoot, backendFolderName);
 
   if (!srcBackend || !exists(srcBackend)) {
     console.error(`[prepare-backend] Missing backend folder under dist/.`);
@@ -82,11 +117,14 @@ function main() {
     process.exit(2);
   }
 
-  console.log(`[prepare-backend] Copying backend from ${srcBackend} -> ${dstBackend}`);
-  rmrf(dstBackend);
-  copyDir(srcBackend, dstBackend);
+  console.log(`[prepare-backend] Copying backend from ${srcBackend} -> ${dstBackendRoot}`);
+  // Let the copy operation mirror the directory; avoid deeply-recursive deletes in JS.
+  if (process.platform !== 'win32') {
+    rmrf(dstBackendRoot);
+  }
+  copyDir(srcBackend, dstBackendRoot);
 
-  const exe = path.join(dstBackend, `${backendFolderName}.exe`);
+  const exe = path.join(dstBackendRoot, `${backendFolderName}.exe`);
   if (!exists(exe)) {
     console.warn(`[prepare-backend] Warning: expected EXE not found at ${exe}`);
   }
@@ -94,4 +132,10 @@ function main() {
   console.log('[prepare-backend] Done');
 }
 
-main();
+try {
+  main();
+} catch (e) {
+  console.error('[prepare-backend] Failed');
+  console.error(e && e.stack ? e.stack : String(e));
+  process.exit(1);
+}

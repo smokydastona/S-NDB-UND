@@ -18,8 +18,8 @@
     "dist": "npm run prep-backend && electron-builder",
     "pack:store": "npm run prep-backend && electron-builder --win appx --dir",
     "dist:store": "npm run prep-backend && electron-builder --win appx",
-    "pack:portable": "npm run prep-backend && electron-builder --win portable --dir",
-    "dist:portable": "npm run prep-backend && electron-builder --win portable"
+    "pack:portable": "npm run prep-backend && electron-builder --config electron-builder.portable.cjs --win --dir --publish never",
+    "dist:portable": "npm run prep-backend && electron-builder --config electron-builder.portable.cjs --win --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.3.0"
@@ -48,6 +48,7 @@
       }
     ],
     "win": {
+      "signAndEditExecutable": false,
       "icon": "build/icon.ico",
       "publisherName": [
         "SmokyDaStona"

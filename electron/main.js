@@ -343,12 +343,19 @@ async function checkForUpdatesInteractive() {
 
 function resolveBundledBackendExe() {
   // When packaged by electron-builder, extraResources land under process.resourcesPath.
-  // We copy the PyInstaller onedir folder into: resources/backend/SÖNDBÖUND/
+  // We bundle the PyInstaller onedir contents into: resources/backend/
+  // (with a fallback to the legacy resources/backend/<name>/ layout).
   const backendFolderName = process.env.SOUNDGEN_BACKEND_FOLDER || 'SÖNDBÖUND';
   const exeName = `${backendFolderName}.exe`;
-  const exePath = path.join(process.resourcesPath, 'backend', backendFolderName, exeName);
-  if (fs.existsSync(exePath)) {
-    return { exePath, backendFolderName };
+
+  const flattened = path.join(process.resourcesPath, 'backend', exeName);
+  if (fs.existsSync(flattened)) {
+    return { exePath: flattened, backendFolderName };
+  }
+
+  const legacyNested = path.join(process.resourcesPath, 'backend', backendFolderName, exeName);
+  if (fs.existsSync(legacyNested)) {
+    return { exePath: legacyNested, backendFolderName };
   }
   return null;
 }
