@@ -166,6 +166,8 @@ $commonCollect = @(
   "--collect-all", "gradio",
   "--collect-all", "safehttpx",
   "--collect-all", "groovy",
+  "--collect-all", "pythonnet",
+  "--collect-all", "clr_loader",
   "--collect-all", "webview",
   "--collect-all", "torch",
   "--collect-all", "diffusers",

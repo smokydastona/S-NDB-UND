@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import os
+import platform
 import socket
 import sys
 import traceback
@@ -40,6 +41,125 @@ def _hide_console_window_windows_best_effort() -> None:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if hwnd:
             ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        return
+
+
+def _safe_dist_version(dist_name: str) -> str | None:
+    try:
+        from importlib.metadata import version  # pyright: ignore[reportMissingImports]
+
+        v = str(version(dist_name)).strip()
+        return v or None
+    except Exception:
+        return None
+
+
+def _safe_find_spec_origin(module_name: str) -> str | None:
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec(module_name)
+        if spec is None:
+            return None
+        origin = getattr(spec, "origin", None)
+        if origin:
+            return str(origin)
+        return None
+    except Exception:
+        return None
+
+
+def _sha256_file(path: Path, limit_bytes: int | None = None) -> str | None:
+    try:
+        import hashlib
+
+        h = hashlib.sha256()
+        read_total = 0
+        with path.open("rb") as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                h.update(chunk)
+                read_total += len(chunk)
+                if limit_bytes is not None and read_total >= int(limit_bytes):
+                    break
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def _log_desktop_diagnostics(local_url: str | None) -> None:
+    try:
+        _write_desktop_log("desktop_diag_begin")
+        _write_desktop_log(f"python={sys.version.replace(chr(10), ' ').strip()}")
+        _write_desktop_log(f"platform={platform.platform()}")
+        _write_desktop_log(f"exe={sys.executable}")
+        _write_desktop_log(f"cwd={os.getcwd()}")
+        _write_desktop_log(f"frozen={bool(getattr(sys, 'frozen', False))}")
+        _write_desktop_log(f"_MEIPASS={getattr(sys, '_MEIPASS', None)!r}")
+        if local_url:
+            _write_desktop_log(f"local_url={local_url}")
+
+        for env_key in ("SOUNDGEN_DESKTOP_GUI", "SOUNDGEN_HIDE_CONSOLE_ON_READY"):
+            _write_desktop_log(f"env.{env_key}={os.environ.get(env_key)!r}")
+
+        # Distribution (pip) versions (doesn't import the modules).
+        for dist in ("pywebview", "pythonnet", "clr-loader", "gradio"):
+            _write_desktop_log(f"dist.{dist}={_safe_dist_version(dist)!r}")
+
+        # Module locations.
+        for mod in ("webview", "pythonnet", "clr_loader", "clr"):
+            _write_desktop_log(f"mod.{mod}.origin={_safe_find_spec_origin(mod)!r}")
+
+        # Candidate runtime DLL paths.
+        candidates: list[Path] = []
+
+        try:
+            import importlib.util
+
+            spec = importlib.util.find_spec("pythonnet")
+            if spec is not None and getattr(spec, "origin", None):
+                pkg_dir = Path(str(spec.origin)).parent
+                candidates.append(pkg_dir / "runtime" / "Python.Runtime.dll")
+        except Exception:
+            pass
+
+        try:
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / "_internal" / "pythonnet" / "runtime" / "Python.Runtime.dll")
+            candidates.append(exe_dir / "pythonnet" / "runtime" / "Python.Runtime.dll")
+        except Exception:
+            pass
+
+        try:
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                base = Path(str(meipass))
+                candidates.append(base / "pythonnet" / "runtime" / "Python.Runtime.dll")
+        except Exception:
+            pass
+
+        seen: set[str] = set()
+        for c in candidates:
+            key = str(c)
+            if key in seen:
+                continue
+            seen.add(key)
+            exists = False
+            size = None
+            sha = None
+            try:
+                exists = c.exists()
+                if exists:
+                    size = int(c.stat().st_size)
+                    sha = _sha256_file(c)
+            except Exception:
+                pass
+            _write_desktop_log(f"pythonnet_dll path={key!s} exists={exists} size={size!r} sha256={sha!r}")
+
+        _write_desktop_log("desktop_diag_end")
     except Exception:
         return
 
@@ -103,6 +223,8 @@ def run_desktop(argv: list[str] | None = None) -> int:
 
     if not local_url:
         local_url = f"http://{host}:{port}"
+
+    _log_desktop_diagnostics(local_url)
 
     webview.create_window("SÖNDBÖUND", local_url, width=1200, height=800)
 

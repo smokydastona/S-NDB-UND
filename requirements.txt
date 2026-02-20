@@ -17,3 +17,8 @@ huggingface_hub>=0.24
 # Optional UI
 gradio>=4.0
 pywebview>=5.0
+
+# Windows desktop backend (pywebview WinForms) depends on pythonnet.
+# Pin these together to avoid mismatched Python.Runtime.dll vs loader code in packaged builds.
+pythonnet==3.0.3
+clr-loader==0.2.7
