@@ -138,6 +138,11 @@ npm install
 npm run dist:portable
 ```
 
+This uses a dedicated Electron Builder config (`electron-builder.portable.cjs`) to force the Windows `portable` target.
+
+Expected output:
+- `electron/dist/SÖNDBÖUND-Portable-<version>.exe`
+
 ## Build a Windows Store package (AppX)
 
 Electron Builder supports AppX (Windows Store) packaging.
